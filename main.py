@@ -158,3 +158,6 @@ if all_rows:
     print(f"✅ Data successfully written to new tab: {new_tab_name}", flush=True)
 else:
     print("⚠️ No transfers to write in new tab.", flush=True)
+# -------------------- Run Flask --------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
