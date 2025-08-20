@@ -131,15 +131,15 @@ def run_script():
 
             time.sleep(1)
 
-    # -------------------- Step 3: Append to Master sheet --------------------
-if all_rows:
-    master_existing = master_sheet.get_all_values()
-    start_row = len(master_existing) + 1
-    master_sheet.update(values=all_rows, range_name=f'A{start_row}', raw=False)
-    print(f"✅ Appended {len(all_rows)} rows to Master sheet.", flush=True)
-else:
-    print("⚠️ No new transfers to append to Master sheet.", flush=True)
-    return "⚠️ No new transfers to append to Master sheet.", 200
+   # -------------------- Step 3: Append to Master sheet --------------------
+    if all_rows:
+        master_existing = master_sheet.get_all_values()
+        start_row = len(master_existing) + 1
+        master_sheet.update(values=all_rows, range_name=f'A{start_row}', raw=False)
+        print(f"✅ Appended {len(all_rows)} rows to Master sheet.", flush=True)
+    else:
+        print("⚠️ No new transfers to append to Master sheet.", flush=True)
+        return "⚠️ No new transfers to append to Master sheet.", 200
 
     # -------------------- Step 4: Create timestamped new tab --------------------
     now = datetime.datetime.now()
