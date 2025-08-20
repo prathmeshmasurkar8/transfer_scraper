@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
 import requests
 from bs4 import BeautifulSoup
 import gspread
@@ -12,15 +6,23 @@ import time
 import datetime
 import re
 import urllib.parse
+import os
+import json
 
 # -------------------- Google Sheet Setup --------------------
-SERVICE_ACCOUNT_FILE = '/Users/hudlindia0117/Downloads/service_account.json'  # ✅ your path
-SPREADSHEET_NAME = 'ABCDEFGD'
+# Get JSON from Railway environment variable
+SERVICE_ACCOUNT_INFO = os.environ.get('GOOGLE_CREDS_JSON')
+if not SERVICE_ACCOUNT_INFO:
+    raise ValueError("GOOGLE_CREDS_JSON environment variable not found!")
 
+service_account_info = json.loads(SERVICE_ACCOUNT_INFO)
 scopes = ['https://www.googleapis.com/auth/spreadsheets',
           'https://www.googleapis.com/auth/drive']
-credentials = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+
+credentials = Credentials.from_service_account_info(service_account_info, scopes=scopes)
 gc = gspread.authorize(credentials)
+
+SPREADSHEET_NAME = 'ABCDEFGD'
 sh = gc.open(SPREADSHEET_NAME)
 
 # Ensure Master sheet exists
@@ -77,8 +79,6 @@ if not dates_list:
 print(f"Found {len(dates_list)} valid transfer dates.", flush=True)
 
 # -------------------- Step 2: Scrape transfers with full pagination --------------------
-import re
-
 all_rows = []
 
 for date_text, date_url in dates_list:
@@ -88,7 +88,7 @@ for date_text, date_url in dates_list:
     response = requests.get(date_url, headers=HEADERS)
     soup = BeautifulSoup(response.text, 'html.parser')
 
-    # Step B: Collect pagination links (all pages for this date)
+    # Step B: Collect pagination links
     pagination_links = [date_url]  # always include first page
     page_anchors = soup.select("ul.tm-pagination a[href]")
 
@@ -99,7 +99,7 @@ for date_text, date_url in dates_list:
             if full_link not in pagination_links:
                 pagination_links.append(full_link)
 
-    # sort pagination by page number if digits exist
+    # sort pagination by page number
     def extract_page_num(url):
         match = re.search(r"(page|seite)/(\d+)", url)
         return int(match.group(2)) if match else 1
@@ -108,7 +108,7 @@ for date_text, date_url in dates_list:
 
     print(f"   🔎 Found {len(pagination_links)} pages for this date", flush=True)
 
-    # Step C: Loop through each page for that date
+    # Step C: Loop through each page
     for page_num, page_url in enumerate(pagination_links, 1):
         response = requests.get(page_url, headers=HEADERS)
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -158,4 +158,3 @@ if all_rows:
     print(f"✅ Data successfully written to new tab: {new_tab_name}", flush=True)
 else:
     print("⚠️ No transfers to write in new tab.", flush=True)
-
