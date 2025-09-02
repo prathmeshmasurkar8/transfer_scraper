@@ -58,16 +58,16 @@ def run_script():
 
     rows = soup.select("table.items tbody tr")
     for row in rows:
-        first_td = row.find("td")
-        if first_td:
-            link = first_td.find("a")
+        link_td = row.find("td", class_="links")  # select td by class
+        if link_td:
+            link = link_td.find("a")
             if link:
                 date_text = link.text.strip()
-                if re.match(r'\d{2}\.\d{2}\.\d{4}$', date_text):
-                    day, month, year = [x.strip() for x in date_text.split(".")]
+                if re.match(r'\d{1,2}\.\d{1,2}\.\d{4}$', date_text):  # relaxed regex
+                    day, month, year = [x.strip().zfill(2) for x in date_text.split(".")]
                     date_obj = datetime.date(int(year), int(month), int(day))
                     if start_date_obj.date() <= date_obj <= end_date_obj.date():
-                        date_url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{year}-{month}-{day}"
+                        date_url = "https://www.transfermarkt.com" + link['href']  # use href directly
                         dates_list.append([date_text, date_url])
 
     if not dates_list:
