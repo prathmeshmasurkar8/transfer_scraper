@@ -25,9 +25,10 @@ def fetch_transfer_dates_selenium(start_date_obj, end_date_obj):
     options.add_argument("--window-size=1920,1080")
     options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
 
-    # This fixes Binary Location error in Railway
+    # Explicitly tell UC where Chromium is in the Railway Docker container
     options.binary_location = "/usr/bin/chromium"
 
+    # Initialize Chrome driver
     driver = uc.Chrome(options=options)
     driver.get(BASE_URL)
     driver.implicitly_wait(5)
