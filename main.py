@@ -22,7 +22,7 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
 
-# -------------------- Step 2: Scrape transfers via ScraperAPI with correct pagination --------------------
+# -------------------- Step 2: Scrape transfers with exact last-page detection --------------------
 def scrape_transfers(dates_list):
     import re
     all_rows = []
@@ -35,56 +35,79 @@ def scrape_transfers(dates_list):
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
 
-    for date_text, base_url in dates_list:
+    for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
-        page_num = 1
 
-        while True:
+        # Fetch first page to detect max page
+        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
+        response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Extract max page number from pagination
+        page_numbers = []
+        for a in soup.select("ul.tm-pagination li a.tm-pagination__link"):
+            text = a.get_text(strip=True)
+            if text.isdigit():
+                page_numbers.append(int(text))
+        max_page = max(page_numbers) if page_numbers else 1
+        print(f" 🔎 Detected {max_page} pages for this date", flush=True)
+
+        # Loop through all pages up to max_page
+        for page_num in range(1, max_page + 1):
             if page_num == 1:
-                page_url = base_url
+                page_url = date_url
             else:
-                page_url = base_url.replace("/datum/", f"/seite/{page_num}/datum/")
+                page_url = date_url.replace("/datum/", f"/seite/{page_num}/datum/")
 
-            try:
-                proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
-                response = requests.get(proxy_url, headers=HEADERS, timeout=20)
-                soup = BeautifulSoup(response.text, 'html.parser')
+            success = False
+            for attempt in range(3):
+                try:
+                    proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
+                    response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+                    if response.status_code != 200:
+                        raise Exception(f"HTTP {response.status_code}")
 
-                transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
-                # Filter valid rows
-                valid_rows = []
-                for row in transfer_rows:
-                    cols = row.find_all("td")
-                    keep_indices = [0, 1, 5, 8, 12, 14]
-                    data = []
-                    for idx, col in enumerate(cols, start=1):
-                        if idx in keep_indices:
-                            text_value = col.get_text(strip=True)
-                            a_tag = col.select_one("a")
-                            if a_tag and a_tag.get("href"):
-                                full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                                text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                            data.append(text_value)
-                    if any(cell.strip() != "" for cell in data):
-                        data.insert(0, date_text)
-                        valid_rows.append(data)
+                    # Filter valid rows
+                    valid_rows = []
+                    for row in transfer_rows:
+                        cols = row.find_all("td")
+                        keep_indices = [0, 1, 5, 8, 12, 14]
+                        data = []
+                        for idx, col in enumerate(cols, start=1):
+                            if idx in keep_indices:
+                                text_value = col.get_text(strip=True)
+                                a_tag = col.select_one("a")
+                                if a_tag and a_tag.get("href"):
+                                    full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                                    text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                                data.append(text_value)
+                        if any(cell.strip() != "" for cell in data):
+                            data.insert(0, date_text)
+                            valid_rows.append(data)
 
-                if not valid_rows:
-                    print(f" 🛑 Last page reached at page {page_num}")
+                    if not valid_rows:
+                        print(f" 🛑 No valid transfers found on page {page_num}, stopping.")
+                        success = True
+                        break
+
+                    print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
+                    all_rows.extend(valid_rows)
+                    success = True
                     break
+                except Exception as e:
+                    print(f"⚠️ Attempt {attempt + 1} failed for {page_url}: {e}", flush=True)
+                    time.sleep(2)
 
-                print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
-                all_rows.extend(valid_rows)
-
-                page_num += 1  # go to next page
-                time.sleep(1)  # polite scraping
-            except Exception as e:
-                print(f"⚠️ Failed to fetch {page_url}: {e}", flush=True)
+            if not success:
+                print(f"⚠️ Failed to fetch {page_url} after 3 attempts, stopping.", flush=True)
                 break
 
-    return all_rows
+            time.sleep(1)  # polite scraping
 
+    return all_rows
 # -------------------- Flask Route --------------------
 @app.route("/run-script")
 def run_script():
