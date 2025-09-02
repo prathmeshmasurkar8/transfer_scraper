@@ -22,12 +22,11 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
     return urls
 
 # -------------------- Step 2: Scrape transfers via ScraperAPI --------------------
-def scrape_transfers(dates_list):
+def scrape_transfers_with_exact_pages(dates_list):
     import os, urllib.parse, time
     import requests
     from bs4 import BeautifulSoup
 
-    all_rows = []
     SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
     if not SCRAPERAPI_KEY:
         raise ValueError("SCRAPERAPI_KEY environment variable not found!")
@@ -37,13 +36,17 @@ def scrape_transfers(dates_list):
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
 
+    all_rows = []
+
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
-
         page_num = 1
+        exact_total_pages = 0
+
         while True:
             current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
             success = False
+            transfer_rows = []
 
             for attempt in range(3):
                 try:
@@ -52,32 +55,29 @@ def scrape_transfers(dates_list):
                     response.raise_for_status()
                     soup = BeautifulSoup(response.text, 'html.parser')
 
-                    # ---------------- Get all <tr> rows ----------------
+                    # ---------------- Only real transfer rows ----------------
                     rows = soup.select("table.items tbody tr")
-                    valid_rows = []
-
                     for row in rows:
-                        player_cell = row.select_one("td.hauptlink a")  # first main player link
+                        player_cell = row.select_one("td.hauptlink a")
                         if player_cell and player_cell.get_text(strip=True):
-                            valid_rows.append(row)
+                            transfer_rows.append(row)
 
-                    # Stop if no valid transfers found
-                    if not valid_rows:
-                        print(f" 🔹 Last page reached at page {page_num}. No more transfers.")
+                    if not transfer_rows:
+                        print(f" 🔹 Last page reached at page {page_num - 1}.")
                         success = True
                         break
 
-                    print(f" ✅ Page {page_num} scraped ({len(valid_rows)} transfers)", flush=True)
+                    print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
                     # ---------------- Collect data ----------------
-                    for row in valid_rows:
+                    for row in transfer_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
                         data = []
                         for idx, col in enumerate(cols, start=1):
                             if idx in keep_indices:
                                 text_value = col.get_text(strip=True)
-                                a_tag = col.select_one("td.hauptlink a")  # only main player link
+                                a_tag = col.select_one("td.hauptlink a")
                                 if a_tag and a_tag.get("href"):
                                     full_url = "https://www.transfermarkt.com" + a_tag["href"]
                                     text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
@@ -97,13 +97,11 @@ def scrape_transfers(dates_list):
                 print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
                 break
 
-            # Stop if fewer than 25 transfers on page (last page)
-            if len(valid_rows) < 25:
-                print(f" 🔹 Last page reached at page {page_num}.")
-                break
-
             page_num += 1
+            exact_total_pages += 1
             time.sleep(1)  # polite scraping
+
+        print(f" 🔹 Exact total pages for {date_text}: {exact_total_pages}", flush=True)
 
     return all_rows
 
