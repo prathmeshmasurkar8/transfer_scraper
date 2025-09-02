@@ -36,37 +36,11 @@ def scrape_transfers(dates_list):
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
 
-        # ---------------- Detect total pages robustly ----------------
-        try:
-            proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
-            response = requests.get(proxy_url, headers=HEADERS, timeout=20)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-
-            pagination = soup.select("ul.tm-pagination li a")
-            last_page = 1
-
-            # Iterate over all pagination links and find the largest number
-            for a in pagination:
-                try:
-                    num = int(a.get_text(strip=True))
-                    if num > last_page:
-                        last_page = num
-                except:
-                    continue
-
-            total_pages = last_page
-            print(f" 🔹 Total pages detected: {total_pages}", flush=True)
-
-        except Exception as e:
-            print(f"⚠️ Could not detect total pages for {date_text}: {e}. Defaulting to 1 page.", flush=True)
-            total_pages = 1
-
-        # ---------------- Loop through pages ----------------
-        for page_num in range(1, total_pages + 1):
+        page_num = 1
+        while True:
             current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
-            success = False
             transfer_rows = []
+            success = False
 
             for attempt in range(3):
                 try:
@@ -78,13 +52,12 @@ def scrape_transfers(dates_list):
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
                     if not transfer_rows:
-                        print(f" 🛑 No transfers found on page {page_num}.")
+                        print(f" 🛑 No transfers found on page {page_num}. Stopping pagination for {date_text}.")
                         success = True
                         break
 
                     print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
-                    # Collect data
                     for row in transfer_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
@@ -103,16 +76,23 @@ def scrape_transfers(dates_list):
 
                     success = True
                     break
+
                 except Exception as e:
                     print(f"⚠️ Attempt {attempt + 1} failed for {current_url}: {e}", flush=True)
                     time.sleep(2)
 
             if not success:
                 print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
+                break
+
+            # Stop if no rows found (last page)
+            if not transfer_rows:
+                break
+
+            page_num += 1
             time.sleep(1)
 
     return all_rows
-
 
 # -------------------- Flask Route --------------------
 @app.route("/run-script")
