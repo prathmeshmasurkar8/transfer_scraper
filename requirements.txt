@@ -3,4 +3,5 @@ gspread
 google-auth
 beautifulsoup4
 flask
+undetected-chromedriver
 
