@@ -20,7 +20,7 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
     delta = (end_date_obj - start_date_obj).days
     for i in range(delta + 1):
         date = start_date_obj + datetime.timedelta(days=i)
-        # Remove the extra slash before 'datum'
+        # Correct URL without extra slash
         url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe/datum/{date.strftime('%Y-%m-%d')}"
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
@@ -45,7 +45,7 @@ def scrape_transfers(dates_list):
         for attempt in range(3):
             try:
                 driver.get(date_url)
-                # Wait until the table is present
+                # Wait for table rows to be present
                 WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "table.items tbody tr"))
                 )
@@ -57,7 +57,7 @@ def scrape_transfers(dates_list):
 
                 for row in transfer_rows:
                     cols = row.find_all("td")
-                    keep_indices = [0, 1, 5, 8, 12, 14]
+                    keep_indices = [0, 1, 5, 8, 12, 14]  # Columns to keep
                     data = []
                     for idx, col in enumerate(cols, start=1):
                         if idx in keep_indices:
@@ -68,7 +68,7 @@ def scrape_transfers(dates_list):
                                 text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
                             data.append(text_value)
                     if data:
-                        data.insert(0, date_text)
+                        data.insert(0, date_text)  # Add date at start
                         all_rows.append(data)
                 success = True
                 break
@@ -143,5 +143,6 @@ def run_script():
 
     return "Scraping completed!", 200
 
+# -------------------- Main --------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
