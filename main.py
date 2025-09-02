@@ -40,15 +40,14 @@ def run_script():
     end_date_raw = worksheet.acell('I1').value
 
     try:
-    start_date_obj = datetime.datetime.strptime(start_date_raw, '%m/%d/%Y')
-    end_date_obj = datetime.datetime.strptime(end_date_raw, '%m/%d/%Y')
+        start_date_obj = datetime.datetime.strptime(start_date_raw, '%m/%d/%Y')
+        end_date_obj = datetime.datetime.strptime(end_date_raw, '%m/%d/%Y')
     except ValueError:
         raise ValueError(f"❌ Invalid date format in H1 or I1 → got '{start_date_raw}' / '{end_date_raw}'. Please use MM/DD/YYYY.")
 
-# Always normalize to date objects for comparisons
-start_date_obj = start_date_obj.date()
-end_date_obj = end_date_obj.date()
-
+    # Always normalize to date objects for comparisons
+    start_date_obj = start_date_obj.date()
+    end_date_obj = end_date_obj.date()
 
     if start_date_obj > end_date_obj:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
@@ -60,35 +59,44 @@ end_date_obj = end_date_obj.date()
     }
 
     # -------------------- Step 1: Fetch transfer dates --------------------
-    print("Fetching transfer dates...", flush=True)
+    print(f"🚨 Fetching transfer dates from URL: {BASE_URL}", flush=True)
     response = requests.get(BASE_URL, headers=HEADERS)
+    print(f"🚨 Response status: {response.status_code}", flush=True)
+
     soup = BeautifulSoup(response.text, 'html.parser')
+    # Debug: Save snippet of HTML
+    print("🚨 First 500 chars of response:", response.text[:500], flush=True)
 
     dates_list = []
     rows = soup.select("table.items tbody tr")
+    print(f"🚨 Found {len(rows)} rows in transfer table", flush=True)
+
     for row in rows:
         first_td = row.find("td")
         if first_td:
             link = first_td.find("a")
             if link:
                 date_text = link.text.strip()
+                print(f"🚨 Found date text: {date_text}", flush=True)
                 if re.match(r'\d{2}\.\d{2}\.\d{4}$', date_text):
                     day, month, year = [x.strip() for x in date_text.split(".")]
                     date_obj = datetime.date(int(year), int(month), int(day))
-                    if start_date_obj.date() <= date_obj <= end_date_obj.date():
+                    print(f"🚨 Parsed date_obj: {date_obj}", flush=True)
+                    if start_date_obj <= date_obj <= end_date_obj:
                         date_url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{year}-{month}-{day}"
+                        print(f"🚨 Adding valid date: {date_text} -> {date_url}", flush=True)
                         dates_list.append([date_text, date_url])
 
     if not dates_list:
         raise ValueError("❌ No transfers available for the provided date range.")
 
-    print(f"Found {len(dates_list)} valid transfer dates.", flush=True)
+    print(f"✅ Found {len(dates_list)} valid transfer dates.", flush=True)
 
     # -------------------- Step 2: Scrape transfers with full pagination --------------------
     all_rows = []
 
     for date_text, date_url in dates_list:
-        print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
+        print(f"\n📅 Scraping transfers for {date_text} from {date_url}", flush=True)
 
         response = requests.get(date_url, headers=HEADERS)
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -108,13 +116,14 @@ end_date_obj = end_date_obj.date()
             return int(match.group(2)) if match else 1
 
         pagination_links = sorted(pagination_links, key=extract_page_num)
-
-        print(f"   🔎 Found {len(pagination_links)} pages for this date", flush=True)
+        print(f"   🔎 Found {len(pagination_links)} pages for {date_text}", flush=True)
 
         for page_num, page_url in enumerate(pagination_links, 1):
+            print(f"🚨 Requesting {page_url}", flush=True)
             response = requests.get(page_url, headers=HEADERS)
-            soup = BeautifulSoup(response.text, 'html.parser')
+            print(f"🚨 Response status: {response.status_code} for page {page_num}", flush=True)
 
+            soup = BeautifulSoup(response.text, 'html.parser')
             transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
             print(f"      ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
@@ -136,7 +145,7 @@ end_date_obj = end_date_obj.date()
 
             time.sleep(1)
 
-   # -------------------- Step 3: Append to Master sheet --------------------
+    # -------------------- Step 3: Append to Master sheet --------------------
     if all_rows:
         master_existing = master_sheet.get_all_values()
         start_row = len(master_existing) + 1
