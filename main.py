@@ -37,6 +37,7 @@ def scrape_transfers(dates_list):
     for date_text, base_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
         page_num = 1
+
         while True:
             # Construct page URL
             if page_num == 1:
@@ -51,11 +52,13 @@ def scrape_transfers(dates_list):
                     response = requests.get(proxy_url, headers=HEADERS, timeout=20)
                     if response.status_code != 200:
                         raise Exception(f"HTTP {response.status_code}")
-                    soup = BeautifulSoup(response.text, 'html.parser')
 
+                    soup = BeautifulSoup(response.text, 'html.parser')
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
-                    if not transfer_rows:
-                        # No more rows = last page reached
+
+                    # STOP CONDITION: last page reached
+                    if not transfer_rows or soup.find("div", class_="no-records"):
+                        print(f" 🛑 Last page reached at page {page_num}")
                         success = True
                         break
 
@@ -87,14 +90,13 @@ def scrape_transfers(dates_list):
                 print(f"⚠️ Failed to fetch {page_url} after 3 attempts", flush=True)
                 break
 
-            if not transfer_rows:
-                # Reached last page
+            # If last page reached, stop
+            if not transfer_rows or soup.find("div", class_="no-records"):
                 break
 
             page_num += 1  # move to next page
 
     return all_rows
-
 # -------------------- Flask Route --------------------
 @app.route("/run-script")
 def run_script():
