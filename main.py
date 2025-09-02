@@ -82,7 +82,7 @@ print("🌍 Fetching transfer dates from Transfermarkt...", flush=True)
 response = requests.get(BASE_URL, headers=headers, timeout=20)
 
 # 👇 Debug lines
-print(f"🔎 Using BASE_URL: {BASE_URL}", flush=True)
+response = requests.get(BASE_URL, headers=headers)
 print(f"🌍 Response status: {response.status_code}", flush=True)
 print(f"📑 First 500 chars of response:\n{response.text[:500]}", flush=True)
 
