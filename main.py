@@ -24,7 +24,6 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
 # -------------------- Step 2: Scrape transfers with next-page logic --------------------
 def scrape_transfers(dates_list):
     all_rows = []
-    SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")  # optional
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
@@ -36,68 +35,53 @@ def scrape_transfers(dates_list):
         page_num = 1
 
         while page_url:
-            success = False
-            for attempt in range(3):
-                try:
-                    # Use proxy if available
-                    if SCRAPERAPI_KEY:
-                        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
-                        response = requests.get(proxy_url, headers=HEADERS, timeout=20)
-                    else:
-                        response = requests.get(page_url, headers=HEADERS, timeout=20)
+            try:
+                response = requests.get(page_url, headers=HEADERS, timeout=20)
+                if response.status_code != 200:
+                    raise Exception(f"HTTP {response.status_code}")
 
-                    if response.status_code != 200:
-                        raise Exception(f"HTTP {response.status_code}")
+                soup = BeautifulSoup(response.text, 'html.parser')
+                transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
+                # Filter valid rows
+                valid_rows = []
+                for row in transfer_rows:
+                    cols = row.find_all("td")
+                    keep_indices = [0, 1, 5, 8, 12, 14]
+                    data = []
+                    for idx, col in enumerate(cols, start=1):
+                        if idx in keep_indices:
+                            text_value = col.get_text(strip=True)
+                            a_tag = col.select_one("a")
+                            if a_tag and a_tag.get("href"):
+                                full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                                text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                            data.append(text_value)
+                    if any(cell.strip() for cell in data):
+                        data.insert(0, date_text)
+                        valid_rows.append(data)
 
-                    # Filter valid rows
-                    valid_rows = []
-                    for row in transfer_rows:
-                        cols = row.find_all("td")
-                        keep_indices = [0, 1, 5, 8, 12, 14]
-                        data = []
-                        for idx, col in enumerate(cols, start=1):
-                            if idx in keep_indices:
-                                text_value = col.get_text(strip=True)
-                                a_tag = col.select_one("a")
-                                if a_tag and a_tag.get("href"):
-                                    full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                                    text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                                data.append(text_value)
-                        if any(cell.strip() for cell in data):
-                            data.insert(0, date_text)
-                            valid_rows.append(data)
+                print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
+                all_rows.extend(valid_rows)
 
-                    print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
-                    all_rows.extend(valid_rows)
-                    success = True
-                    break
+                # Detect next page
+                next_page_tag = soup.select_one("a.tm-pagination__link[title='Go to the next page']")
+                if next_page_tag and next_page_tag.get("href"):
+                    page_url = urllib.parse.urljoin("https://www.transfermarkt.com", next_page_tag["href"])
+                    page_num += 1
+                    time.sleep(1)
+                else:
+                    page_url = None  # No more pages
 
-                except Exception as e:
-                    print(f"⚠️ Attempt {attempt + 1} failed for {page_url}: {e}", flush=True)
-                    time.sleep(2)
-
-            if not success:
-                print(f"⚠️ Failed to fetch {page_url} after 3 attempts", flush=True)
+            except Exception as e:
+                print(f"⚠️ Failed to fetch {page_url}: {e}", flush=True)
                 break
-
-            # Check for next page
-            next_page_tag = soup.select_one("a.tm-pagination__link[title='Go to the next page']")
-            if next_page_tag and next_page_tag.get("href"):
-                page_url = urllib.parse.urljoin("https://www.transfermarkt.com", next_page_tag["href"])
-                page_num += 1
-                time.sleep(1)  # polite scraping
-            else:
-                page_url = None  # No more pages
 
     return all_rows
 
 # -------------------- Flask Route --------------------
 @app.route("/run-script")
 def run_script():
-    # Google Sheets Setup
     SERVICE_ACCOUNT_INFO = os.environ.get('GOOGLE_CREDS_JSON')
     if not SERVICE_ACCOUNT_INFO:
         return "GOOGLE_CREDS_JSON environment variable not found!", 500
@@ -127,12 +111,10 @@ def run_script():
     if start_date_obj > end_date_obj:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
 
-    # Generate URLs and scrape
     print("Generating transfer URLs...", flush=True)
     dates_list = generate_transfer_urls(start_date_obj, end_date_obj)
     all_rows = scrape_transfers(dates_list)
 
-    # Append to Master sheet
     if all_rows:
         master_existing = master_sheet.get_all_values()
         start_row = len(master_existing) + 1
@@ -141,7 +123,6 @@ def run_script():
     else:
         print("⚠️ No new transfers to append to Master sheet.", flush=True)
 
-    # Create timestamped new tab
     now = datetime.datetime.now()
     new_tab_name = now.strftime("Transfers_%Y-%m-%d_%H-%M")
     new_worksheet = sh.add_worksheet(title=new_tab_name, rows="2000", cols="10")
