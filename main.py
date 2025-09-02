@@ -37,6 +37,8 @@ def scrape_transfers(dates_list):
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
 
         page_num = 1
+        previous_page_hash = None  # to detect repeated pages
+
         while True:
             current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
             success = False
@@ -49,23 +51,32 @@ def scrape_transfers(dates_list):
 
                     soup = BeautifulSoup(response.text, 'html.parser')
 
-                    # Get all rows
+                    # ---------------- Get all rows ----------------
                     rows = soup.select("table.items tbody tr")
-
                     valid_rows = []
+
                     for row in rows:
                         player_cell = row.select_one("td.hauptlink a")
                         if player_cell and player_cell.get_text(strip=True):
                             valid_rows.append(row)
 
+                    # Stop if no valid transfers found
                     if not valid_rows:
                         print(f" 🔹 Last page reached at page {page_num}. No more transfers.")
                         success = True
                         break
 
+                    # Stop if page repeats (same as previous)
+                    current_page_hash = hash(str([r.get_text() for r in valid_rows]))
+                    if current_page_hash == previous_page_hash:
+                        print(f" 🔹 Last page reached at page {page_num}. Duplicate page detected.")
+                        success = True
+                        break
+                    previous_page_hash = current_page_hash
+
                     print(f" ✅ Page {page_num} scraped ({len(valid_rows)} transfers)", flush=True)
 
-                    # Collect data
+                    # ---------------- Collect data ----------------
                     for row in valid_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
@@ -73,7 +84,7 @@ def scrape_transfers(dates_list):
                         for idx, col in enumerate(cols, start=1):
                             if idx in keep_indices:
                                 text_value = col.get_text(strip=True)
-                                a_tag = col.select_one("a")
+                                a_tag = col.select_one("td.hauptlink a")
                                 if a_tag and a_tag.get("href"):
                                     full_url = "https://www.transfermarkt.com" + a_tag["href"]
                                     text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
@@ -91,6 +102,11 @@ def scrape_transfers(dates_list):
 
             if not success:
                 print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
+                break
+
+            # Stop if fewer than 25 transfers found (last page)
+            if len(valid_rows) < 25:
+                print(f" 🔹 Last page reached at page {page_num}.")
                 break
 
             page_num += 1
