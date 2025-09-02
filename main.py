@@ -38,7 +38,9 @@ def scrape_transfers(dates_list):
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
         page_num = 1
         while True:
-            current_url = date_url if page_num == 1 else date_url.replace("/datum/", f"/seite/{page_num}/datum/")
+            # Correct pagination logic
+            current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
+
             success = False
             transfer_rows = []
 
