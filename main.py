@@ -119,55 +119,56 @@ if not dates_list:
 
 print(f"📅 Found {len(dates_list)} valid transfer dates.", flush=True)
     # -------------------- Step 2: Scrape transfers with full pagination --------------------
-    all_rows = []
+all_rows = []
 
-    for date_text, date_url in dates_list:
-        print(f"\n📌 Scraping transfers for {date_text}...", flush=True)
+for date_text, date_url in dates_list:
+    print(f"\n📌 Scraping transfers for {date_text}...", flush=True)
 
-        response = requests.get(date_url, headers=HEADERS)
+    response = requests.get(date_url, headers=HEADERS)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    pagination_links = [date_url]
+    page_anchors = soup.select("ul.tm-pagination a[href]")
+
+    for a in page_anchors:
+        href = a.get("href", "")
+        if "page" in href or "seite" in href:
+            full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
+            if full_link not in pagination_links:
+                pagination_links.append(full_link)
+
+    def extract_page_num(url):
+        match = re.search(r"(page|seite)/(\d+)", url)
+        return int(match.group(2)) if match else 1
+
+    pagination_links = sorted(pagination_links, key=extract_page_num)
+    print(f"   🔎 Found {len(pagination_links)} pages for this date.", flush=True)
+
+    for page_num, page_url in enumerate(pagination_links, 1):
+        response = requests.get(page_url, headers=HEADERS)
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        pagination_links = [date_url]
-        page_anchors = soup.select("ul.tm-pagination a[href]")
+        transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
+        print(f"      ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
-        for a in page_anchors:
-            href = a.get("href", "")
-            if "page" in href or "seite" in href:
-                full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
-                if full_link not in pagination_links:
-                    pagination_links.append(full_link)
+        for row in transfer_rows:
+            cols = row.find_all("td")
+            keep_indices = [0, 1, 5, 8, 12, 14]
+            data = []
+            for idx, col in enumerate(cols, start=1):
+                if idx in keep_indices:
+                    text_value = col.get_text(strip=True)
+                    a_tag = col.select_one("a")
+                    if a_tag and a_tag.get("href"):
+                        full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                        text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                    data.append(text_value)
+            if data:
+                data.insert(0, date_text)
+                all_rows.append(data)
 
-        def extract_page_num(url):
-            match = re.search(r"(page|seite)/(\d+)", url)
-            return int(match.group(2)) if match else 1
+        time.sleep(1)
 
-        pagination_links = sorted(pagination_links, key=extract_page_num)
-        print(f"   🔎 Found {len(pagination_links)} pages for this date.", flush=True)
-
-        for page_num, page_url in enumerate(pagination_links, 1):
-            response = requests.get(page_url, headers=HEADERS)
-            soup = BeautifulSoup(response.text, 'html.parser')
-
-            transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
-            print(f"      ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
-
-            for row in transfer_rows:
-                cols = row.find_all("td")
-                keep_indices = [0, 1, 5, 8, 12, 14]
-                data = []
-                for idx, col in enumerate(cols, start=1):
-                    if idx in keep_indices:
-                        text_value = col.get_text(strip=True)
-                        a_tag = col.select_one("a")
-                        if a_tag and a_tag.get("href"):
-                            full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                            text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                        data.append(text_value)
-                if data:
-                    data.insert(0, date_text)
-                    all_rows.append(data)
-
-            time.sleep(1)
 
     # -------------------- Step 3: Append to Master sheet --------------------
     if all_rows:
