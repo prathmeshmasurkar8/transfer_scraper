@@ -49,12 +49,17 @@ def scrape_transfers(dates_list):
 
         pagination_links = [date_url]  # always include first page
 
-        # select all numeric page links only
-        page_anchors = soup.select("ul.tm-pagination a.tm-pagination__link")
-        for a in page_anchors:
-            if a.text.strip().isdigit():  # numeric pages only
-                href = a.get("href")
-                full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
+        # select all <li> items in pagination
+        page_items = soup.select("ul.tm-pagination li")
+        for li in page_items:
+            text = li.get_text(strip=True)
+            if text.isdigit():  # numeric pages only
+                a_tag = li.find("a")
+                if a_tag and a_tag.get("href"):
+                    full_link = urllib.parse.urljoin("https://www.transfermarkt.com", a_tag["href"])
+                else:
+                    # Active last page with no <a>
+                    full_link = date_url.replace("/datum/", f"/seite/{text}/datum/")
                 if full_link not in pagination_links:
                     pagination_links.append(full_link)
 
