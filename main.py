@@ -20,7 +20,8 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
     delta = (end_date_obj - start_date_obj).days
     for i in range(delta + 1):
         date = start_date_obj + datetime.timedelta(days=i)
-        url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{date.strftime('%Y-%m-%d')}"
+        # Remove the extra slash before 'datum'
+        url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe/datum/{date.strftime('%Y-%m-%d')}"
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
 
