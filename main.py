@@ -1,6 +1,5 @@
 import time
 import datetime
-import re
 import os
 import json
 import urllib.parse
@@ -12,36 +11,82 @@ import requests
 
 app = Flask(__name__)
 
-# -------------------- Step 1: Fetch transfer dates using Requests --------------------
-def fetch_transfer_dates_requests(start_date_obj, end_date_obj):
-    BASE_URL = f"https://www.transfermarkt.com/statistik/transfertage?land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+# -------------------- Step 1: Generate transfer URLs --------------------
+def generate_transfer_urls(start_date_obj, end_date_obj):
+    urls = []
+    delta = (end_date_obj - start_date_obj).days
+    for i in range(delta + 1):
+        date = start_date_obj + datetime.timedelta(days=i)
+        url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{date.strftime('%Y-%m-%d')}"
+        urls.append([date.strftime("%d.%m.%Y"), url])
+    return urls
+
+# -------------------- Step 2: Scrape transfers for each date --------------------
+def scrape_transfers(dates_list):
     HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
+    all_rows = []
 
-    response = requests.get(BASE_URL, headers=HEADERS)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    dates_list = []
+    for date_text, date_url in dates_list:
+        print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
+        response = requests.get(date_url, headers=HEADERS)
+        if response.status_code != 200:
+            print(f"⚠️ Failed to fetch {date_url}")
+            continue
 
-    tds = soup.select("table.items tbody tr td.links a")
-    for td in tds:
-        date_text = td.text.strip()
-        href = td.get("href")
-        if re.match(r'\d{1,2}\.\d{1,2}\.\d{4}$', date_text):
-            day, month, year = [x.strip().zfill(2) for x in date_text.split(".")]
-            date_obj = datetime.date(int(year), int(month), int(day))
-            if start_date_obj.date() <= date_obj <= end_date_obj.date():
-                dates_list.append([date_text, urllib.parse.urljoin("https://www.transfermarkt.com", href)])
+        soup = BeautifulSoup(response.text, 'html.parser')
+        pagination_links = [date_url]
+        page_anchors = soup.select("ul.tm-pagination a[href]")
+        for a in page_anchors:
+            href = a.get("href", "")
+            if "page" in href or "seite" in href:
+                full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
+                if full_link not in pagination_links:
+                    pagination_links.append(full_link)
 
-    return dates_list
+        def extract_page_num(url):
+            import re
+            match = re.search(r"(page|seite)/(\d+)", url)
+            return int(match.group(2)) if match else 1
 
-# -------------------- Flask Route --------------------
+        pagination_links = sorted(pagination_links, key=extract_page_num)
+        print(f" 🔎 Found {len(pagination_links)} pages for this date", flush=True)
+
+        for page_num, page_url in enumerate(pagination_links, 1):
+            response = requests.get(page_url, headers=HEADERS)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
+            print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
+
+            for row in transfer_rows:
+                cols = row.find_all("td")
+                keep_indices = [0, 1, 5, 8, 12, 14]
+                data = []
+                for idx, col in enumerate(cols, start=1):
+                    if idx in keep_indices:
+                        text_value = col.get_text(strip=True)
+                        a_tag = col.select_one("a")
+                        if a_tag and a_tag.get("href"):
+                            full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                            text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                        data.append(text_value)
+                if data:
+                    data.insert(0, date_text)
+                    all_rows.append(data)
+            time.sleep(1)
+
+    return all_rows
+
+# -------------------- Flask route --------------------
 @app.route("/run-script")
 def run_script():
-    # Google Sheets Setup
+    # -------------------- Google Sheet Setup --------------------
     SERVICE_ACCOUNT_INFO = os.environ.get('GOOGLE_CREDS_JSON')
     if not SERVICE_ACCOUNT_INFO:
-        return "GOOGLE_CREDS_JSON environment variable not found!", 500
+        return "❌ GOOGLE_CREDS_JSON environment variable not found!", 500
+
     service_account_info = json.loads(SERVICE_ACCOUNT_INFO)
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     credentials = Credentials.from_service_account_info(service_account_info, scopes=scopes)
@@ -63,63 +108,41 @@ def run_script():
         start_date_obj = datetime.datetime.strptime(start_date_raw, '%m/%d/%Y')
         end_date_obj = datetime.datetime.strptime(end_date_raw, '%m/%d/%Y')
     except ValueError:
-        return "Invalid date format in H1 or I1. Use MM/DD/YYYY.", 500
+        return "❌ Invalid date format in H1 or I1. Use MM/DD/YYYY.", 500
 
     if start_date_obj > end_date_obj:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
 
-    # Fetch transfer dates
-    print("Fetching transfer dates...", flush=True)
-    dates_list = fetch_transfer_dates_requests(start_date_obj, end_date_obj)
+    # -------------------- Step 1: Generate URLs --------------------
+    print("Generating transfer URLs...", flush=True)
+    dates_list = generate_transfer_urls(start_date_obj, end_date_obj)
 
-    all_rows = []
+    # -------------------- Step 2: Scrape data --------------------
+    all_rows = scrape_transfers(dates_list)
 
-    if dates_list:
-        HEADERS = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
-        }
-        for date_text, date_url in dates_list:
-            response = requests.get(date_url, headers=HEADERS)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
-            for row in transfer_rows:
-                cols = row.find_all("td")
-                keep_indices = [0, 1, 5, 8, 12, 14]
-                data = []
-                for idx, col in enumerate(cols, start=1):
-                    if idx in keep_indices:
-                        text_value = col.get_text(strip=True)
-                        a_tag = col.select_one("a")
-                        if a_tag and a_tag.get("href"):
-                            full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                            text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                        data.append(text_value)
-                if data:
-                    data.insert(0, date_text)
-                    all_rows.append(data)
-            time.sleep(1)
-
-    # Append to Master sheet
+    # -------------------- Step 3: Append to Master sheet --------------------
     if all_rows:
         master_existing = master_sheet.get_all_values()
         start_row = len(master_existing) + 1
         master_sheet.update(values=all_rows, range_name=f'A{start_row}', raw=False)
-        print(f"Appended {len(all_rows)} rows to Master sheet.", flush=True)
+        print(f"✅ Appended {len(all_rows)} rows to Master sheet.", flush=True)
     else:
-        print("No new transfers to append to Master sheet.", flush=True)
+        print("⚠️ No new transfers to append to Master sheet.", flush=True)
 
-    # Create timestamped new tab
+    # -------------------- Step 4: Create timestamped new tab --------------------
     now = datetime.datetime.now()
     new_tab_name = now.strftime("Transfers_%Y-%m-%d_%H-%M")
-    new_worksheet = sh.add_worksheet(title=new_tab_name, rows="2000", cols="10")
-    new_worksheet.update(values=[['Date', 'Player', 'Age', 'From', 'To', 'Fee']], range_name='A1')
+    try:
+        new_worksheet = sh.add_worksheet(title=new_tab_name, rows="2000", cols="10")
+    except Exception as e:
+        return f"Error creating new sheet/tab: {str(e)}", 500
 
+    new_worksheet.update(values=[['Date', 'Player', 'Age', 'From', 'To', 'Fee']], range_name='A1')
     if all_rows:
         new_worksheet.update(values=all_rows, range_name='A2', raw=False)
-        print(f"Data successfully written to new tab: {new_tab_name}", flush=True)
+        print(f"✅ Data successfully written to new tab: {new_tab_name}", flush=True)
     else:
-        new_worksheet.update(values=[['No transfers found in this range']], range_name='A2', raw=False)
-        print(f"No transfers found for the selected range. Created tab: {new_tab_name}", flush=True)
+        print(f"⚠️ No transfers to write in new tab. Created tab: {new_tab_name}", flush=True)
 
     return "Scraping completed!", 200
 
