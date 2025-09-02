@@ -1,4 +1,8 @@
+# Use Python 3.11 slim image
 FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
 
 # Install Chromium + dependencies
 RUN apt-get update && apt-get install -y \
@@ -6,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     chromium-driver \
     fonts-liberation \
     libnss3 \
-    libgconf-2-4 \
+    libgconf-2-4 || true \
     libxi6 \
     libxcomposite1 \
     libxcursor1 \
@@ -16,19 +20,21 @@ RUN apt-get update && apt-get install -y \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
     libxss1 \
-    libpangocairo-1.0-0 \
-    libpango1.0-0 \
+    libpangocairo-1.0-0 || true \
+    libpango-1.0-0 \
     libappindicator3-1 \
     libgbm1 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
+# Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy the rest of the project
 COPY . .
 
+# Expose the port Flask will run on
 EXPOSE 5000
 
+# Command to run your app
 CMD ["python", "main.py"]
