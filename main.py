@@ -40,23 +40,34 @@ def scrape_transfers(dates_list):
         while True:
             current_url = date_url if page_num == 1 else date_url.replace("/datum/", f"/seite/{page_num}/datum/")
             success = False
+            transfer_rows = []
+
             for attempt in range(3):
                 try:
                     proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
                     response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+
+                    # Stop if page doesn't exist
+                    if response.status_code == 404:
+                        print(f" 🛑 Page {page_num} returned 404. Reached last page for {date_text}.")
+                        success = True
+                        break
+
                     if response.status_code != 200:
                         raise Exception(f"HTTP {response.status_code}")
 
                     soup = BeautifulSoup(response.text, 'html.parser')
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
+                    # Stop if no transfers on page → last page reached
                     if not transfer_rows:
-                        print(f" 🛑 No transfers found on page {page_num}, stopping pagination for {date_text}")
+                        print(f" 🛑 No transfers found on page {page_num}. Stopping pagination for {date_text}.")
                         success = True
                         break
 
                     print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
+                    # Collect data
                     for row in transfer_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
@@ -72,6 +83,7 @@ def scrape_transfers(dates_list):
                         if data:
                             data.insert(0, date_text)
                             all_rows.append(data)
+
                     success = True
                     break
                 except Exception as e:
@@ -79,13 +91,18 @@ def scrape_transfers(dates_list):
                     time.sleep(2)
 
             if not success:
-                print(f"⚠️ Failed to fetch {current_url} after 3 attempts, stopping pagination for {date_text}", flush=True)
+                print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts. Stopping pagination for {date_text}.", flush=True)
+                break
+
+            # Stop the loop if last page reached
+            if not transfer_rows or response.status_code == 404:
                 break
 
             page_num += 1
             time.sleep(1)  # polite scraping
 
     return all_rows
+
 
 # -------------------- Flask Route --------------------
 @app.route("/run-script")
