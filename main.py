@@ -8,7 +8,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
 import requests
-import re
 
 app = Flask(__name__)
 
@@ -22,10 +21,10 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
 
-# -------------------- Step 2: Scrape transfers with correct last-page detection --------------------
+# -------------------- Step 2: Scrape transfers using next-page logic --------------------
 def scrape_transfers(dates_list):
     all_rows = []
-    SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")  # optional, for proxying
+    SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")  # optional for proxies
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
@@ -33,44 +32,14 @@ def scrape_transfers(dates_list):
 
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
+        page_url = date_url
+        page_num = 1
 
-        # Step 1: Detect all pages for this date
-        try:
-            response = requests.get(date_url, headers=HEADERS, timeout=20)
-            soup = BeautifulSoup(response.text, 'html.parser')
-        except Exception as e:
-            print(f"⚠️ Failed to fetch first page: {e}", flush=True)
-            continue
-
-        # Collect pagination links
-        pagination_links = [date_url]  # always include first page
-        page_items = soup.select("ul.tm-pagination li")
-        for li in page_items:
-            text = li.get_text(strip=True)
-            if text.isdigit():
-                a_tag = li.find("a")
-                if a_tag and a_tag.get("href"):
-                    full_link = urllib.parse.urljoin("https://www.transfermarkt.com", a_tag["href"])
-                else:
-                    # Last page is active, no <a>
-                    full_link = date_url.replace("/datum/", f"/seite/{text}/datum/")
-                if full_link not in pagination_links:
-                    pagination_links.append(full_link)
-
-        # Sort pages numerically
-        def extract_page_num(url):
-            match = re.search(r"(page|seite)/(\d+)", url)
-            return int(match.group(2)) if match else 1
-
-        pagination_links = sorted(pagination_links, key=extract_page_num)
-        print(f" 🔎 Detected {len(pagination_links)} pages for this date", flush=True)
-
-        # Step 2: Loop through each page
-        for page_num, page_url in enumerate(pagination_links, 1):
+        while True:
             success = False
             for attempt in range(3):
                 try:
-                    # Use ScraperAPI if you want proxies; otherwise plain requests
+                    # Use ScraperAPI if provided
                     if SCRAPERAPI_KEY:
                         proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
                         response = requests.get(proxy_url, headers=HEADERS, timeout=20)
@@ -83,7 +52,7 @@ def scrape_transfers(dates_list):
                     soup = BeautifulSoup(response.text, 'html.parser')
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
-                    # Filter valid rows
+                    # Extract valid rows
                     valid_rows = []
                     for row in transfer_rows:
                         cols = row.find_all("td")
@@ -101,11 +70,6 @@ def scrape_transfers(dates_list):
                             data.insert(0, date_text)
                             valid_rows.append(data)
 
-                    if not valid_rows:
-                        print(f" 🛑 Last page reached at page {page_num}")
-                        success = True
-                        break
-
                     print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
                     all_rows.extend(valid_rows)
                     success = True
@@ -119,14 +83,21 @@ def scrape_transfers(dates_list):
                 print(f"⚠️ Failed to fetch {page_url} after 3 attempts", flush=True)
                 break
 
-            time.sleep(1)  # polite scraping
+            # Check for "next page" button
+            next_page_link = soup.select_one("a.tm-pagination__link[title='Go to the next page']")
+            if next_page_link and next_page_link.get("href"):
+                page_url = urllib.parse.urljoin("https://www.transfermarkt.com", next_page_link["href"])
+                page_num += 1
+                time.sleep(1)
+            else:
+                # No next page → stop
+                break
 
     return all_rows
 
 # -------------------- Flask Route --------------------
 @app.route("/run-script")
 def run_script():
-    # Google Sheets Setup
     SERVICE_ACCOUNT_INFO = os.environ.get('GOOGLE_CREDS_JSON')
     if not SERVICE_ACCOUNT_INFO:
         return "GOOGLE_CREDS_JSON environment variable not found!", 500
@@ -156,12 +127,10 @@ def run_script():
     if start_date_obj > end_date_obj:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
 
-    # Generate URLs and scrape
     print("Generating transfer URLs...", flush=True)
     dates_list = generate_transfer_urls(start_date_obj, end_date_obj)
     all_rows = scrape_transfers(dates_list)
 
-    # Append to Master sheet
     if all_rows:
         master_existing = master_sheet.get_all_values()
         start_row = len(master_existing) + 1
@@ -170,7 +139,6 @@ def run_script():
     else:
         print("⚠️ No new transfers to append to Master sheet.", flush=True)
 
-    # Create timestamped new tab
     now = datetime.datetime.now()
     new_tab_name = now.strftime("Transfers_%Y-%m-%d_%H-%M")
     new_worksheet = sh.add_worksheet(title=new_tab_name, rows="2000", cols="10")
