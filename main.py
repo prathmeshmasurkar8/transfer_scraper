@@ -40,7 +40,6 @@ def scrape_transfers(dates_list):
         while True:
             current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
             success = False
-            transfer_rows = []
 
             for attempt in range(3):
                 try:
@@ -49,14 +48,17 @@ def scrape_transfers(dates_list):
                     response.raise_for_status()
 
                     soup = BeautifulSoup(response.text, 'html.parser')
-                    transfer_rows = soup.select("table.items tbody tr")  # get all rows
 
-                    # Filter valid rows: must have a player name
+                    # ---------------- Get all player cells ----------------
+                    player_cells = soup.select("table.items tbody td.hauptlink a")
+
+                    # Filter valid rows by parent <tr>
                     valid_rows = []
-                    for row in transfer_rows:
-                        player_link = row.select_one("td.hauptlink a")
-                        if player_link and player_link.get_text(strip=True):
-                            valid_rows.append(row)
+                    for player in player_cells:
+                        if player.get_text(strip=True):
+                            row = player.find_parent("tr")
+                            if row not in valid_rows:
+                                valid_rows.append(row)
 
                     if not valid_rows:
                         print(f" 🛑 No valid transfers found on page {page_num}. Stopping pagination for {date_text}.")
