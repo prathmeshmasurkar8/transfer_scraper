@@ -1,5 +1,6 @@
+selenium
 gspread
 google-auth
-flask
-requests
 beautifulsoup4
+flask
+
