@@ -22,14 +22,10 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
 
-# -------------------- Step 2: Scrape transfers via ScraperAPI with correct last-page detection --------------------
+# -------------------- Step 2: Scrape transfers with correct last-page detection --------------------
 def scrape_transfers(dates_list):
-    import re
     all_rows = []
-    SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
-    if not SCRAPERAPI_KEY:
-        raise ValueError("SCRAPERAPI_KEY environment variable not found!")
-
+    SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")  # optional, for proxying
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
@@ -38,39 +34,49 @@ def scrape_transfers(dates_list):
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
 
-        # Step 1: Get first page and determine total pages
+        # Step 1: Detect all pages for this date
         try:
-            proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
-            response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+            response = requests.get(date_url, headers=HEADERS, timeout=20)
             soup = BeautifulSoup(response.text, 'html.parser')
-
-            # Detect total transfers
-            total_transfers_text = soup.select_one("div.responsive-table p")
-            if total_transfers_text:
-                match = re.search(r"of\s+(\d+)", total_transfers_text.text)
-                if match:
-                    total_transfers = int(match.group(1))
-                    transfers_per_page = 25
-                    max_page = (total_transfers + transfers_per_page - 1) // transfers_per_page
-                else:
-                    max_page = 1
-            else:
-                max_page = 1
-
-            print(f" 🔎 Detected {max_page} pages for this date", flush=True)
-
         except Exception as e:
             print(f"⚠️ Failed to fetch first page: {e}", flush=True)
             continue
 
-        # Step 2: Loop through all pages
-        for page_num in range(1, max_page + 1):
-            page_url = date_url if page_num == 1 else date_url.replace("/datum/", f"/seite/{page_num}/datum/")
+        # Collect pagination links
+        pagination_links = [date_url]  # always include first page
+        page_items = soup.select("ul.tm-pagination li")
+        for li in page_items:
+            text = li.get_text(strip=True)
+            if text.isdigit():
+                a_tag = li.find("a")
+                if a_tag and a_tag.get("href"):
+                    full_link = urllib.parse.urljoin("https://www.transfermarkt.com", a_tag["href"])
+                else:
+                    # Last page is active, no link
+                    full_link = date_url.replace("/datum/", f"/seite/{text}/datum/")
+                if full_link not in pagination_links:
+                    pagination_links.append(full_link)
+
+        # Sort pages numerically
+        def extract_page_num(url):
+            match = re.search(r"(page|seite)/(\d+)", url)
+            return int(match.group(2)) if match else 1
+
+        pagination_links = sorted(pagination_links, key=extract_page_num)
+        print(f" 🔎 Detected {len(pagination_links)} pages for this date", flush=True)
+
+        # Step 2: Loop through each page
+        for page_num, page_url in enumerate(pagination_links, 1):
             success = False
             for attempt in range(3):
                 try:
-                    proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
-                    response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+                    # Use ScraperAPI if you want proxies; otherwise plain requests
+                    if SCRAPERAPI_KEY:
+                        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
+                        response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+                    else:
+                        response = requests.get(page_url, headers=HEADERS, timeout=20)
+
                     if response.status_code != 200:
                         raise Exception(f"HTTP {response.status_code}")
 
@@ -91,9 +97,14 @@ def scrape_transfers(dates_list):
                                     full_url = "https://www.transfermarkt.com" + a_tag["href"]
                                     text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
                                 data.append(text_value)
-                        if any(cell.strip() != "" for cell in data):
+                        if any(cell.strip() for cell in data):
                             data.insert(0, date_text)
                             valid_rows.append(data)
+
+                    if not valid_rows:
+                        print(f" 🛑 Last page reached at page {page_num}")
+                        success = True
+                        break
 
                     print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
                     all_rows.extend(valid_rows)
@@ -108,7 +119,11 @@ def scrape_transfers(dates_list):
                 print(f"⚠️ Failed to fetch {page_url} after 3 attempts", flush=True)
                 break
 
-            time.sleep(1)  # polite scraping
+            # Stop if last page reached
+            if not valid_rows:
+                break
+
+            time.sleep(1)
 
     return all_rows
 
