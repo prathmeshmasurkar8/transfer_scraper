@@ -44,17 +44,18 @@ def run_script():
     end_date_raw = worksheet.acell('I1').value
     print(f"📅 Raw dates from sheet → Start: {start_date_raw}, End: {end_date_raw}", flush=True)
 
-    try:
-        start_date_obj = datetime.datetime.strptime(start_date_raw, '%m/%d/%Y')
-        end_date_obj = datetime.datetime.strptime(end_date_raw, '%m/%d/%Y')
-    except ValueError:
-        raise ValueError(
-            f"❌ Invalid date format in H1 or I1 → got '{start_date_raw}' / '{end_date_raw}'. Please use MM/DD/YYYY."
-        )
+    # -------------------- Flexible Date Parsing --------------------
+    def parse_sheet_date(date_str):
+        """Try to parse Google Sheet date with multiple formats."""
+        for fmt in ('%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d'):
+            try:
+                return datetime.datetime.strptime(date_str, fmt).date()
+            except ValueError:
+                continue
+        raise ValueError(f"❌ Invalid date format in sheet: '{date_str}'. Use MM/DD/YYYY.")
 
-    # Always normalize to date objects for comparisons
-    start_date_obj = start_date_obj.date()
-    end_date_obj = end_date_obj.date()
+    start_date_obj = parse_sheet_date(start_date_raw)
+    end_date_obj = parse_sheet_date(end_date_raw)
     print(f"✅ Parsed date range: {start_date_obj} → {end_date_obj}", flush=True)
 
     if start_date_obj > end_date_obj:
@@ -62,16 +63,22 @@ def run_script():
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
 
     # -------------------- Transfermarkt Setup --------------------
-    BASE_URL = f"https://www.transfermarkt.com/statistik/transfertage?land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+    BASE_URL = (
+        f"https://www.transfermarkt.com/statistik/transfertage?"
+        f"land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}"
+        f"&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+    )
     HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/139.0.0.0 Safari/537.36"
     }
 
     # -------------------- Step 1: Fetch transfer dates --------------------
     print("🌍 Fetching transfer dates from Transfermarkt...", flush=True)
     response = requests.get(BASE_URL, headers=HEADERS)
 
-    # 👇 Added your debug lines here
+    # 👇 Debug lines you wanted
     print(f"🔎 Using BASE_URL: {BASE_URL}", flush=True)
     print(f"🌍 Response status: {response.status_code}", flush=True)
     print(f"📑 First 500 chars of response:\n{response.text[:500]}", flush=True)
@@ -86,11 +93,15 @@ def run_script():
             link = first_td.find("a")
             if link:
                 date_text = link.text.strip()
+                # Handle European dd.mm.yyyy format
                 if re.match(r'\d{2}\.\d{2}\.\d{4}$', date_text):
                     day, month, year = [x.strip() for x in date_text.split(".")]
                     date_obj = datetime.date(int(year), int(month), int(day))
                     if start_date_obj <= date_obj <= end_date_obj:
-                        date_url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{year}-{month}-{day}"
+                        date_url = (
+                            f"https://www.transfermarkt.com/transfers/transfertagedetail/"
+                            f"statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{year}-{month}-{day}"
+                        )
                         dates_list.append([date_text, date_url])
 
     if not dates_list:
