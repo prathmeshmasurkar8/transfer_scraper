@@ -16,7 +16,7 @@ import requests
 
 app = Flask(__name__)
 
-# -------------------- Step 1: Fetch transfer dates using Selenium --------------------
+# -------------------- Step 1: Fetch transfer dates using undetected-chromedriver --------------------
 def fetch_transfer_dates_selenium(start_date_obj, end_date_obj):
     BASE_URL = f"https://www.transfermarkt.com/statistik/transfertage?land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
 
@@ -26,18 +26,33 @@ def fetch_transfer_dates_selenium(start_date_obj, end_date_obj):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
-    options.binary_location = "/usr/bin/chromium"  # Necessary for Railway
+    
+    # Explicitly set binary location for Railway / Docker
+    options.binary_location = "/usr/bin/chromium"
 
     driver = uc.Chrome(options=options)
     driver.get(BASE_URL)
 
-    # Wait until the date links are loaded
+    # -------------------- Accept cookies if popup exists --------------------
+    try:
+        cookie_btn = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "button#onetrust-accept-btn-handler"))
+        )
+        cookie_btn.click()
+        time.sleep(1)
+    except:
+        pass  # ignore if cookie button not present
+
+    # -------------------- Wait for table to load --------------------
     WebDriverWait(driver, 15).until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "td.links > a"))
+        EC.presence_of_element_located((By.CSS_SELECTOR, "table.items tbody tr"))
     )
+    time.sleep(2)  # extra wait for safety
 
     dates_list = []
-    tds = driver.find_elements(By.CSS_SELECTOR, "td.links > a")
+
+    # Find all <td class="links"> in the table
+    tds = driver.find_elements(By.CSS_SELECTOR, "table.items tbody tr td.links a")
     for td in tds:
         date_text = td.text.strip()
         href = td.get_attribute("href")
