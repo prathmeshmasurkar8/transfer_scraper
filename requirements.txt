@@ -4,4 +4,5 @@ google-auth
 beautifulsoup4
 flask
 undetected-chromedriver
+requests
 
