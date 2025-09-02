@@ -40,10 +40,15 @@ def run_script():
     end_date_raw = worksheet.acell('I1').value
 
     try:
-        start_date_obj = datetime.datetime.strptime(start_date_raw, '%m/%d/%Y')
-        end_date_obj = datetime.datetime.strptime(end_date_raw, '%m/%d/%Y')
+    start_date_obj = datetime.datetime.strptime(start_date_raw, '%m/%d/%Y')
+    end_date_obj = datetime.datetime.strptime(end_date_raw, '%m/%d/%Y')
     except ValueError:
-        raise ValueError("❌ Invalid date format in H1 or I1. Use MM/DD/YYYY.")
+        raise ValueError(f"❌ Invalid date format in H1 or I1 → got '{start_date_raw}' / '{end_date_raw}'. Please use MM/DD/YYYY.")
+
+# Always normalize to date objects for comparisons
+start_date_obj = start_date_obj.date()
+end_date_obj = end_date_obj.date()
+
 
     if start_date_obj > end_date_obj:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
