@@ -24,6 +24,10 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
 
 # -------------------- Step 2: Scrape transfers via ScraperAPI --------------------
 def scrape_transfers(dates_list):
+    import os, urllib.parse, time, re
+    import requests
+    from bs4 import BeautifulSoup
+
     all_rows = []
     SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
     if not SCRAPERAPI_KEY:
@@ -37,7 +41,7 @@ def scrape_transfers(dates_list):
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
 
-        # ---------------- Detect total pages using last page link ----------------
+        # ---------------- Detect total pages from "last page" ----------------
         total_pages = 1
         try:
             proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
@@ -50,6 +54,7 @@ def scrape_transfers(dates_list):
                 match = re.search(r"\(page (\d+)\)", last_page_li["title"])
                 if match:
                     total_pages = int(match.group(1))
+
             print(f" 🔹 Total pages detected: {total_pages}", flush=True)
 
         except Exception as e:
@@ -57,6 +62,7 @@ def scrape_transfers(dates_list):
             total_pages = 1
 
         # ---------------- Loop through pages ----------------
+        seen_rows = set()  # To avoid duplicates
         for page_num in range(1, total_pages + 1):
             current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
             success = False
@@ -70,14 +76,13 @@ def scrape_transfers(dates_list):
                     soup = BeautifulSoup(response.text, 'html.parser')
 
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
-
                     if not transfer_rows:
-                        print(f" 🛑 No transfers found on page {page_num}.")
+                        print(f" 🛑 No transfers found on page {page_num}. Stopping.", flush=True)
                         success = True
                         break
 
-                    print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
-
+                    # Collect data
+                    new_rows_count = 0
                     for row in transfer_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
@@ -91,8 +96,20 @@ def scrape_transfers(dates_list):
                                     text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
                                 data.append(text_value)
                         if data:
-                            data.insert(0, date_text)  # Use the URL date
-                            all_rows.append(data)
+                            data.insert(0, date_text)
+                            row_tuple = tuple(data)
+                            if row_tuple not in seen_rows:
+                                all_rows.append(data)
+                                seen_rows.add(row_tuple)
+                                new_rows_count += 1
+
+                    print(f" ✅ Page {page_num} scraped ({new_rows_count} new transfers)", flush=True)
+
+                    # If no new rows were added, stop pagination
+                    if new_rows_count == 0:
+                        print(f" 🔹 Last page reached at page {page_num}. No new transfers.", flush=True)
+                        success = True
+                        break
 
                     success = True
                     break
@@ -103,6 +120,8 @@ def scrape_transfers(dates_list):
 
             if not success:
                 print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
+                break
+
             time.sleep(1)
 
     return all_rows
