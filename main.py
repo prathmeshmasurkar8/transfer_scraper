@@ -49,19 +49,17 @@ def scrape_transfers(dates_list):
 
                     soup = BeautifulSoup(response.text, 'html.parser')
 
-                    # ---------------- Get only main player links (2nd column) ----------------
-                    player_cells = soup.select("table.items tbody tr td:nth-child(2) a")
+                    # Get all rows
+                    rows = soup.select("table.items tbody tr")
 
-                    # Filter valid rows
                     valid_rows = []
-                    for player in player_cells:
-                        if player.get_text(strip=True):
-                            row = player.find_parent("tr")
-                            if row not in valid_rows:
-                                valid_rows.append(row)
+                    for row in rows:
+                        player_cell = row.select_one("td.hauptlink a")
+                        if player_cell and player_cell.get_text(strip=True):
+                            valid_rows.append(row)
 
                     if not valid_rows:
-                        print(f" 🔹 Last page reached at page {page_num}. No valid transfers found.")
+                        print(f" 🔹 Last page reached at page {page_num}. No more transfers.")
                         success = True
                         break
 
@@ -93,11 +91,6 @@ def scrape_transfers(dates_list):
 
             if not success:
                 print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
-                break
-
-            # Stop if last page detected (fewer than 25 transfers)
-            if len(valid_rows) < 25:
-                print(f" 🔹 Last page reached at page {page_num}.")
                 break
 
             page_num += 1
