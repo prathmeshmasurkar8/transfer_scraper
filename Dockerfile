@@ -4,13 +4,12 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install Chromium + dependencies
+# Install Chromium + dependencies for Selenium
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
     fonts-liberation \
     libnss3 \
-    libgconf-2-4 || true \
     libxi6 \
     libxcomposite1 \
     libxcursor1 \
@@ -20,10 +19,7 @@ RUN apt-get update && apt-get install -y \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
     libxss1 \
-    libpangocairo-1.0-0 || true \
-    libpango-1.0-0 \
-    libappindicator3-1 \
-    libgbm1 \
+    libpangocairo-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install
