@@ -22,9 +22,12 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
 
-# -------------------- Step 2: Scrape transfers with full pagination --------------------
+# -------------------- Step 2: Scrape transfers via ScraperAPI with proper pagination --------------------
 def scrape_transfers(dates_list):
     all_rows = []
+    SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
+    if not SCRAPERAPI_KEY:
+        raise ValueError("SCRAPERAPI_KEY environment variable not found!")
 
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -33,26 +36,29 @@ def scrape_transfers(dates_list):
 
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
-
         page_num = 1
-        while True:
-            url_to_scrape = date_url if page_num == 1 else date_url.replace("/datum/", f"/seite/{page_num}/datum/")
-            success = False
 
+        while True:  # loop through pages
+            url_to_fetch = date_url
+            if page_num > 1:
+                url_to_fetch = date_url.replace("/datum/", f"/seite/{page_num}/datum/")
+
+            success = False
             for attempt in range(3):
                 try:
-                    response = requests.get(url_to_scrape, headers=HEADERS, timeout=20)
+                    proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(url_to_fetch)}"
+                    response = requests.get(proxy_url, headers=HEADERS, timeout=20)
                     if response.status_code != 200:
                         raise Exception(f"HTTP {response.status_code}")
 
                     soup = BeautifulSoup(response.text, 'html.parser')
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
                     if not transfer_rows:
-                        # No rows on this page → reached last page
+                        print(f" 🛑 No transfers found on page {page_num}, last page reached.")
                         success = True
                         break
 
-                    print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} valid transfers)", flush=True)
+                    print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
                     for row in transfer_rows:
                         cols = row.find_all("td")
@@ -73,24 +79,22 @@ def scrape_transfers(dates_list):
                     success = True
                     break
                 except Exception as e:
-                    print(f"⚠️ Attempt {attempt + 1} failed for {url_to_scrape}: {e}", flush=True)
+                    print(f"⚠️ Attempt {attempt + 1} failed for {url_to_fetch}: {e}", flush=True)
                     time.sleep(2)
 
             if not success:
-                print(f"⚠️ Failed to fetch {url_to_scrape} after 3 attempts", flush=True)
+                print(f"⚠️ Failed to fetch {url_to_fetch} after 3 attempts", flush=True)
                 break
 
-            # Check if there is a "next page" link
-            next_page = soup.select_one("a.tm-pagination__link[title='Go to the next page']")
-            if next_page:
+            # Check if "next page" exists
+            next_page_link = soup.select_one('a.tm-pagination__link[title="Go to the next page"]')
+            if next_page_link:
                 page_num += 1
                 time.sleep(1)  # polite scraping
             else:
-                # No next page → stop
-                break
+                break  # no more pages for this date
 
     return all_rows
-
 
 # -------------------- Flask Route --------------------
 @app.route("/run-script")
