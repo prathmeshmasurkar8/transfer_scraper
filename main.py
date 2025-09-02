@@ -17,72 +17,52 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
     delta = (end_date_obj - start_date_obj).days
     for i in range(delta + 1):
         date = start_date_obj + datetime.timedelta(days=i)
+        # Correct URL for Transfermarkt
         url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe/datum/{date.strftime('%Y-%m-%d')}"
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
 
-# -------------------- Step 2: Scrape transfers using requests --------------------
+# -------------------- Step 2: Scrape transfers via ScraperAPI --------------------
 def scrape_transfers(dates_list):
+    all_rows = []
+    SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
+    if not SCRAPERAPI_KEY:
+        raise ValueError("SCRAPERAPI_KEY environment variable not found!")
+
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
-    all_rows = []
 
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
-
-        # Retry mechanism
         success = False
         for attempt in range(3):
             try:
-                response = requests.get(date_url, headers=HEADERS, timeout=15)
+                proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
+                response = requests.get(proxy_url, headers=HEADERS, timeout=20)
                 if response.status_code != 200:
                     raise Exception(f"HTTP {response.status_code}")
                 soup = BeautifulSoup(response.text, 'html.parser')
 
-                # Pagination handling
-                pagination_links = [date_url]
-                page_anchors = soup.select("ul.tm-pagination a[href]")
-                for a in page_anchors:
-                    href = a.get("href", "")
-                    if "page" in href or "seite" in href:
-                        full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
-                        if full_link not in pagination_links:
-                            pagination_links.append(full_link)
+                transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
+                print(f" ✅ Found {len(transfer_rows)} transfers", flush=True)
 
-                # Sort pages
-                def extract_page_num(url):
-                    import re
-                    match = re.search(r"(page|seite)/(\d+)", url)
-                    return int(match.group(2)) if match else 1
-
-                pagination_links = sorted(pagination_links, key=extract_page_num)
-                print(f" 🔎 Found {len(pagination_links)} pages for this date", flush=True)
-
-                # Scrape each page
-                for page_num, page_url in enumerate(pagination_links, 1):
-                    r = requests.get(page_url, headers=HEADERS, timeout=15)
-                    soup_page = BeautifulSoup(r.text, 'html.parser')
-                    transfer_rows = soup_page.select("table.items tbody tr.odd, table.items tbody tr.even")
-                    print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
-
-                    for row in transfer_rows:
-                        cols = row.find_all("td")
-                        keep_indices = [0, 1, 5, 8, 12, 14]  # Date, Player, Age, From, To, Fee
-                        data = []
-                        for idx, col in enumerate(cols, start=1):
-                            if idx in keep_indices:
-                                text_value = col.get_text(strip=True)
-                                a_tag = col.select_one("a")
-                                if a_tag and a_tag.get("href"):
-                                    full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                                    text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                                data.append(text_value)
-                        if data:
-                            data.insert(0, date_text)
-                            all_rows.append(data)
-                    time.sleep(1)
+                for row in transfer_rows:
+                    cols = row.find_all("td")
+                    keep_indices = [0, 1, 5, 8, 12, 14]
+                    data = []
+                    for idx, col in enumerate(cols, start=1):
+                        if idx in keep_indices:
+                            text_value = col.get_text(strip=True)
+                            a_tag = col.select_one("a")
+                            if a_tag and a_tag.get("href"):
+                                full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                                text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                            data.append(text_value)
+                    if data:
+                        data.insert(0, date_text)
+                        all_rows.append(data)
                 success = True
                 break
             except Exception as e:
