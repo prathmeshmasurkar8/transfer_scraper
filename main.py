@@ -52,7 +52,7 @@ def scrape_transfers(dates_list):
                 if a_tag and a_tag.get("href"):
                     full_link = urllib.parse.urljoin("https://www.transfermarkt.com", a_tag["href"])
                 else:
-                    # Last page is active, no link
+                    # Last page is active, no <a>
                     full_link = date_url.replace("/datum/", f"/seite/{text}/datum/")
                 if full_link not in pagination_links:
                     pagination_links.append(full_link)
@@ -119,11 +119,7 @@ def scrape_transfers(dates_list):
                 print(f"⚠️ Failed to fetch {page_url} after 3 attempts", flush=True)
                 break
 
-            # Stop if last page reached
-            if not valid_rows:
-                break
-
-            time.sleep(1)
+            time.sleep(1)  # polite scraping
 
     return all_rows
 
