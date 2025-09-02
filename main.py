@@ -22,8 +22,9 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
 
-# -------------------- Step 2: Scrape transfers via ScraperAPI with proper pagination --------------------
+# -------------------- Step 2: Scrape transfers via ScraperAPI with correct pagination --------------------
 def scrape_transfers(dates_list):
+    import re  # make sure re is imported
     all_rows = []
     SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
     if not SCRAPERAPI_KEY:
@@ -37,23 +38,27 @@ def scrape_transfers(dates_list):
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
 
-        # -------------------- Step A: Detect pagination links --------------------
-        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
-        response = requests.get(proxy_url, headers=HEADERS, timeout=20)
-        if response.status_code != 200:
-            print(f"⚠️ Failed to fetch {date_url} (HTTP {response.status_code})")
+        # Step 1: Detect all pages for this date
+        try:
+            proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
+            response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+            soup = BeautifulSoup(response.text, 'html.parser')
+        except Exception as e:
+            print(f"⚠️ Failed to fetch first page: {e}", flush=True)
             continue
 
-        soup = BeautifulSoup(response.text, 'html.parser')
-        pagination_links = [date_url]
-        page_anchors = soup.select("ul.tm-pagination a[href]")
+        pagination_links = [date_url]  # always include first page
+
+        # select all numeric page links only
+        page_anchors = soup.select("ul.tm-pagination a.tm-pagination__link")
         for a in page_anchors:
-            href = a.get("href", "")
-            if "page" in href or "seite" in href:
+            if a.text.strip().isdigit():  # numeric pages only
+                href = a.get("href")
                 full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
                 if full_link not in pagination_links:
                     pagination_links.append(full_link)
 
+        # sort pages in order
         def extract_page_num(url):
             match = re.search(r"(page|seite)/(\d+)", url)
             return int(match.group(2)) if match else 1
@@ -61,7 +66,7 @@ def scrape_transfers(dates_list):
         pagination_links = sorted(pagination_links, key=extract_page_num)
         print(f" 🔎 Found {len(pagination_links)} pages for this date", flush=True)
 
-        # -------------------- Step B: Scrape each page --------------------
+        # Step 2: Loop through each page
         for page_num, page_url in enumerate(pagination_links, 1):
             success = False
             for attempt in range(3):
@@ -88,7 +93,6 @@ def scrape_transfers(dates_list):
                                     full_url = "https://www.transfermarkt.com" + a_tag["href"]
                                     text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
                                 data.append(text_value)
-                        # Only keep row if it has actual data
                         if any(cell.strip() != "" for cell in data):
                             data.insert(0, date_text)
                             valid_rows.append(data)
@@ -114,7 +118,7 @@ def scrape_transfers(dates_list):
             if not valid_rows:
                 break
 
-            time.sleep(1)  # small pause between pages
+            time.sleep(1)  # polite scraping
 
     return all_rows
 
