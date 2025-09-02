@@ -24,7 +24,7 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
 
 # -------------------- Step 2: Scrape transfers via ScraperAPI with correct pagination --------------------
 def scrape_transfers(dates_list):
-    import re  # make sure re is imported
+    import re
     all_rows = []
     SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
     if not SCRAPERAPI_KEY:
@@ -35,95 +35,53 @@ def scrape_transfers(dates_list):
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
 
-    for date_text, date_url in dates_list:
+    for date_text, base_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
+        page_num = 1
 
-        # Step 1: Detect all pages for this date
-        try:
-            proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
-            response = requests.get(proxy_url, headers=HEADERS, timeout=20)
-            soup = BeautifulSoup(response.text, 'html.parser')
-        except Exception as e:
-            print(f"⚠️ Failed to fetch first page: {e}", flush=True)
-            continue
+        while True:
+            if page_num == 1:
+                page_url = base_url
+            else:
+                page_url = base_url.replace("/datum/", f"/seite/{page_num}/datum/")
 
-        pagination_links = [date_url]  # always include first page
+            try:
+                proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
+                response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+                soup = BeautifulSoup(response.text, 'html.parser')
 
-        # select all <li> items in pagination
-        page_items = soup.select("ul.tm-pagination li")
-        for li in page_items:
-            text = li.get_text(strip=True)
-            if text.isdigit():  # numeric pages only
-                a_tag = li.find("a")
-                if a_tag and a_tag.get("href"):
-                    full_link = urllib.parse.urljoin("https://www.transfermarkt.com", a_tag["href"])
-                else:
-                    # Active last page with no <a>
-                    full_link = date_url.replace("/datum/", f"/seite/{text}/datum/")
-                if full_link not in pagination_links:
-                    pagination_links.append(full_link)
+                transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
-        # sort pages in order
-        def extract_page_num(url):
-            match = re.search(r"(page|seite)/(\d+)", url)
-            return int(match.group(2)) if match else 1
+                # Filter valid rows
+                valid_rows = []
+                for row in transfer_rows:
+                    cols = row.find_all("td")
+                    keep_indices = [0, 1, 5, 8, 12, 14]
+                    data = []
+                    for idx, col in enumerate(cols, start=1):
+                        if idx in keep_indices:
+                            text_value = col.get_text(strip=True)
+                            a_tag = col.select_one("a")
+                            if a_tag and a_tag.get("href"):
+                                full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                                text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                            data.append(text_value)
+                    if any(cell.strip() != "" for cell in data):
+                        data.insert(0, date_text)
+                        valid_rows.append(data)
 
-        pagination_links = sorted(pagination_links, key=extract_page_num)
-        print(f" 🔎 Found {len(pagination_links)} pages for this date", flush=True)
-
-        # Step 2: Loop through each page
-        for page_num, page_url in enumerate(pagination_links, 1):
-            success = False
-            for attempt in range(3):
-                try:
-                    proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
-                    response = requests.get(proxy_url, headers=HEADERS, timeout=20)
-                    if response.status_code != 200:
-                        raise Exception(f"HTTP {response.status_code}")
-
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
-
-                    # Filter valid rows (skip placeholders)
-                    valid_rows = []
-                    for row in transfer_rows:
-                        cols = row.find_all("td")
-                        keep_indices = [0, 1, 5, 8, 12, 14]
-                        data = []
-                        for idx, col in enumerate(cols, start=1):
-                            if idx in keep_indices:
-                                text_value = col.get_text(strip=True)
-                                a_tag = col.select_one("a")
-                                if a_tag and a_tag.get("href"):
-                                    full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                                    text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                                data.append(text_value)
-                        if any(cell.strip() != "" for cell in data):
-                            data.insert(0, date_text)
-                            valid_rows.append(data)
-
-                    if not valid_rows:
-                        print(f" 🛑 Last page reached at page {page_num}")
-                        success = True
-                        break
-
-                    print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
-                    all_rows.extend(valid_rows)
-                    success = True
+                if not valid_rows:
+                    print(f" 🛑 Last page reached at page {page_num}")
                     break
-                except Exception as e:
-                    print(f"⚠️ Attempt {attempt + 1} failed for {page_url}: {e}", flush=True)
-                    time.sleep(2)
 
-            if not success:
-                print(f"⚠️ Failed to fetch {page_url} after 3 attempts", flush=True)
+                print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
+                all_rows.extend(valid_rows)
+
+                page_num += 1  # go to next page
+                time.sleep(1)  # polite scraping
+            except Exception as e:
+                print(f"⚠️ Failed to fetch {page_url}: {e}", flush=True)
                 break
-
-            # Stop if last page reached
-            if not valid_rows:
-                break
-
-            time.sleep(1)  # polite scraping
 
     return all_rows
 
