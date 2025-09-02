@@ -23,6 +23,10 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
 
 # -------------------- Step 2: Scrape transfers via ScraperAPI --------------------
 def scrape_transfers(dates_list):
+    import os, urllib.parse, time
+    import requests
+    from bs4 import BeautifulSoup
+
     all_rows = []
     SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
     if not SCRAPERAPI_KEY:
@@ -36,16 +40,21 @@ def scrape_transfers(dates_list):
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
 
-        # ---------------- Detect total pages ----------------
+        # ---------------- Detect total pages using "last page" link ----------------
+        total_pages = 1
         try:
             proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
             response = requests.get(proxy_url, headers=HEADERS, timeout=20)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            pagination = soup.select("ul.tm-pagination li a")
-            page_numbers = [int(a.get_text()) for a in pagination if a.get_text().isdigit()]
-            total_pages = max(page_numbers) if page_numbers else 1
+            last_page_li = soup.select_one("li.tm-pagination__list-item--icon-last-page a")
+            if last_page_li and "title" in last_page_li.attrs:
+                title_text = last_page_li["title"]  # e.g. "Go to the last page (page 2)"
+                import re
+                match = re.search(r"\(page (\d+)\)", title_text)
+                if match:
+                    total_pages = int(match.group(1))
             print(f" 🔹 Total pages detected: {total_pages}", flush=True)
 
         except Exception as e:
@@ -63,8 +72,8 @@ def scrape_transfers(dates_list):
                     proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
                     response = requests.get(proxy_url, headers=HEADERS, timeout=20)
                     response.raise_for_status()
-
                     soup = BeautifulSoup(response.text, 'html.parser')
+
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
                     if not transfer_rows:
@@ -74,7 +83,6 @@ def scrape_transfers(dates_list):
 
                     print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
-                    # Collect data
                     for row in transfer_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
