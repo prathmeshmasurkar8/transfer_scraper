@@ -23,23 +23,36 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
 
 # -------------------- Step 2: Scrape transfers for each date --------------------
 def scrape_transfers(dates_list):
+    import time
+    import urllib.parse
+    from bs4 import BeautifulSoup
+    import requests
+
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+                      "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.transfermarkt.com/"
     }
+
     all_rows = []
 
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
-        response = requests.get(date_url, headers=HEADERS)
-        if response.status_code != 200:
-            print(f"⚠️ Failed to fetch {date_url}")
+
+        # Retry up to 3 times
+        for attempt in range(3):
+            response = requests.get(date_url, headers=HEADERS)
+            if response.status_code == 200:
+                break
+            time.sleep(2)
+        else:
+            print(f"⚠️ Failed to fetch {date_url} after 3 attempts")
             continue
 
         soup = BeautifulSoup(response.text, 'html.parser')
         pagination_links = [date_url]
-        page_anchors = soup.select("ul.tm-pagination a[href]")
-        for a in page_anchors:
+        for a in soup.select("ul.tm-pagination a[href]"):
             href = a.get("href", "")
             if "page" in href or "seite" in href:
                 full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
