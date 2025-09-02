@@ -17,7 +17,6 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
     delta = (end_date_obj - start_date_obj).days
     for i in range(delta + 1):
         date = start_date_obj + datetime.timedelta(days=i)
-        # Correct URL for Transfermarkt
         url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe/datum/{date.strftime('%Y-%m-%d')}"
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
@@ -36,11 +35,26 @@ def scrape_transfers(dates_list):
 
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
-        page_num = 1
-        while True:
-            # Correct pagination logic
-            current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
 
+        # ---------------- Detect total pages ----------------
+        try:
+            proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
+            response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            pagination = soup.select("ul.tm-pagination li a")
+            page_numbers = [int(a.get_text()) for a in pagination if a.get_text().isdigit()]
+            total_pages = max(page_numbers) if page_numbers else 1
+            print(f" 🔹 Total pages detected: {total_pages}", flush=True)
+
+        except Exception as e:
+            print(f"⚠️ Could not detect total pages for {date_text}: {e}. Defaulting to 1 page.", flush=True)
+            total_pages = 1
+
+        # ---------------- Loop through pages ----------------
+        for page_num in range(1, total_pages + 1):
+            current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
             success = False
             transfer_rows = []
 
@@ -48,22 +62,13 @@ def scrape_transfers(dates_list):
                 try:
                     proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
                     response = requests.get(proxy_url, headers=HEADERS, timeout=20)
-
-                    # Stop if page doesn't exist
-                    if response.status_code == 404:
-                        print(f" 🛑 Page {page_num} returned 404. Reached last page for {date_text}.")
-                        success = True
-                        break
-
-                    if response.status_code != 200:
-                        raise Exception(f"HTTP {response.status_code}")
+                    response.raise_for_status()
 
                     soup = BeautifulSoup(response.text, 'html.parser')
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
-                    # Stop if no transfers on page → last page reached
                     if not transfer_rows:
-                        print(f" 🛑 No transfers found on page {page_num}. Stopping pagination for {date_text}.")
+                        print(f" 🛑 No transfers found on page {page_num}.")
                         success = True
                         break
 
@@ -93,15 +98,8 @@ def scrape_transfers(dates_list):
                     time.sleep(2)
 
             if not success:
-                print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts. Stopping pagination for {date_text}.", flush=True)
-                break
-
-            # Stop the loop if last page reached
-            if not transfer_rows or response.status_code == 404:
-                break
-
-            page_num += 1
-            time.sleep(1)  # polite scraping
+                print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
+            time.sleep(1)
 
     return all_rows
 
