@@ -63,12 +63,12 @@ def run_script():
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
 
     # -------------------- Transfermarkt Setup --------------------
-    BASE_URL = (
-        f"https://www.transfermarkt.com/statistik/transfertage?"
-        f"land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}"
-        f"&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
-    )
-    headers = {
+BASE_URL = (
+    f"https://www.transfermarkt.com/statistik/transfertage?"
+    f"land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}"
+    f"&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+)
+headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
@@ -76,9 +76,15 @@ def run_script():
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.transfermarkt.com/",
     "Connection": "keep-alive",
-    }
-    response = requests.get(BASE_URL, headers=headers, timeout=20)
+}
 
+print("🌍 Fetching transfer dates from Transfermarkt...", flush=True)
+response = requests.get(BASE_URL, headers=headers, timeout=20)
+
+# 👇 Debug lines
+print(f"🔎 Using BASE_URL: {BASE_URL}", flush=True)
+print(f"🌍 Response status: {response.status_code}", flush=True)
+print(f"📑 First 500 chars of response:\n{response.text[:500]}", flush=True)
 
     # -------------------- Step 1: Fetch transfer dates --------------------
     print("🌍 Fetching transfer dates from Transfermarkt...", flush=True)
