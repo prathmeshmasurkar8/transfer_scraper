@@ -32,7 +32,7 @@ def fetch_transfer_dates_selenium(start_date_obj, end_date_obj):
     driver.get(BASE_URL)
 
     # Wait until the date links are loaded
-    WebDriverWait(driver, 10).until(
+    WebDriverWait(driver, 15).until(
         EC.presence_of_all_elements_located((By.CSS_SELECTOR, "td.links > a"))
     )
 
