@@ -70,6 +70,12 @@ def run_script():
     # -------------------- Step 1: Fetch transfer dates --------------------
     print("🌍 Fetching transfer dates from Transfermarkt...", flush=True)
     response = requests.get(BASE_URL, headers=HEADERS)
+
+    # 👇 Added your debug lines here
+    print(f"🔎 Using BASE_URL: {BASE_URL}", flush=True)
+    print(f"🌍 Response status: {response.status_code}", flush=True)
+    print(f"📑 First 500 chars of response:\n{response.text[:500]}", flush=True)
+
     soup = BeautifulSoup(response.text, 'html.parser')
 
     dates_list = []
