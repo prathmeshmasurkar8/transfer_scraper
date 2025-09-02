@@ -62,113 +62,113 @@ def run_script():
         print("↔️ Swapping dates since start > end", flush=True)
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
 
-   # -------------------- Transfermarkt Setup --------------------
-BASE_URL = (
-    f"https://www.transfermarkt.com/statistik/transfertage?"
-    f"land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}"
-    f"&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
-)
+    # -------------------- Transfermarkt Setup --------------------
+    BASE_URL = (
+        f"https://www.transfermarkt.com/statistik/transfertage?"
+        f"land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}"
+        f"&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+    )
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
-    ),
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/avif,image/webp,image/apng,*/*;q=0.8"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.transfermarkt.com/",
-    "Connection": "keep-alive",
-}
+    HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,image/apng,*/*;q=0.8"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.transfermarkt.com/",
+        "Connection": "keep-alive",
+    }
 
-# -------------------- Step 1: Fetch transfer dates --------------------
-print("🌍 Fetching transfer dates from Transfermarkt...", flush=True)
-print(f"🔎 Using BASE_URL: {BASE_URL}", flush=True)
+    # -------------------- Step 1: Fetch transfer dates --------------------
+    print("🌍 Fetching transfer dates from Transfermarkt...", flush=True)
+    print(f"🔎 Using BASE_URL: {BASE_URL}", flush=True)
 
-response = requests.get(BASE_URL, headers=HEADERS, timeout=20)
+    response = requests.get(BASE_URL, headers=HEADERS, timeout=20)
 
-# 👇 Debug output
-print(f"🌍 Response status: {response.status_code}", flush=True)
-print(f"📑 First 500 chars of response:\n{response.text[:500]}", flush=True)
+    # 👇 Debug output
+    print(f"🌍 Response status: {response.status_code}", flush=True)
+    print(f"📑 First 500 chars of response:\n{response.text[:500]}", flush=True)
 
-soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(response.text, "html.parser")
 
-dates_list = []
-rows = soup.select("table.items tbody tr")
-for row in rows:
-    first_td = row.find("td")
-    if first_td:
-        link = first_td.find("a")
-        if link:
-            date_text = link.text.strip()
-            # Handle European dd.mm.yyyy format
-            if re.match(r"\d{2}\.\d{2}\.\d{4}$", date_text):
-                day, month, year = [x.strip() for x in date_text.split(".")]
-                date_obj = datetime.date(int(year), int(month), int(day))
-                if start_date_obj <= date_obj <= end_date_obj:
-                    date_url = (
-                        f"https://www.transfermarkt.com/transfers/transfertagedetail/"
-                        f"statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{year}-{month}-{day}"
-                    )
-                    dates_list.append([date_text, date_url])
+    dates_list = []
+    rows = soup.select("table.items tbody tr")
+    for row in rows:
+        first_td = row.find("td")
+        if first_td:
+            link = first_td.find("a")
+            if link:
+                date_text = link.text.strip()
+                # Handle European dd.mm.yyyy format
+                if re.match(r"\d{2}\.\d{2}\.\d{4}$", date_text):
+                    day, month, year = [x.strip() for x in date_text.split(".")]
+                    date_obj = datetime.date(int(year), int(month), int(day))
+                    if start_date_obj <= date_obj <= end_date_obj:
+                        date_url = (
+                            f"https://www.transfermarkt.com/transfers/transfertagedetail/"
+                            f"statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{year}-{month}-{day}"
+                        )
+                        dates_list.append([date_text, date_url])
 
-if not dates_list:
-    raise ValueError("❌ No transfers available for the provided date range.")
+    if not dates_list:
+        raise ValueError("❌ No transfers available for the provided date range.")
 
-print(f"📅 Found {len(dates_list)} valid transfer dates.", flush=True)
+    print(f"📅 Found {len(dates_list)} valid transfer dates.", flush=True)
+
     # -------------------- Step 2: Scrape transfers with full pagination --------------------
-all_rows = []
+    all_rows = []
 
-for date_text, date_url in dates_list:
-    print(f"\n📌 Scraping transfers for {date_text}...", flush=True)
+    for date_text, date_url in dates_list:
+        print(f"\n📌 Scraping transfers for {date_text}...", flush=True)
 
-    response = requests.get(date_url, headers=HEADERS)
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    pagination_links = [date_url]
-    page_anchors = soup.select("ul.tm-pagination a[href]")
-
-    for a in page_anchors:
-        href = a.get("href", "")
-        if "page" in href or "seite" in href:
-            full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
-            if full_link not in pagination_links:
-                pagination_links.append(full_link)
-
-    def extract_page_num(url):
-        match = re.search(r"(page|seite)/(\d+)", url)
-        return int(match.group(2)) if match else 1
-
-    pagination_links = sorted(pagination_links, key=extract_page_num)
-    print(f"   🔎 Found {len(pagination_links)} pages for this date.", flush=True)
-
-    for page_num, page_url in enumerate(pagination_links, 1):
-        response = requests.get(page_url, headers=HEADERS)
+        response = requests.get(date_url, headers=HEADERS)
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
-        print(f"      ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
+        pagination_links = [date_url]
+        page_anchors = soup.select("ul.tm-pagination a[href]")
 
-        for row in transfer_rows:
-            cols = row.find_all("td")
-            keep_indices = [0, 1, 5, 8, 12, 14]
-            data = []
-            for idx, col in enumerate(cols, start=1):
-                if idx in keep_indices:
-                    text_value = col.get_text(strip=True)
-                    a_tag = col.select_one("a")
-                    if a_tag and a_tag.get("href"):
-                        full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                        text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                    data.append(text_value)
-            if data:
-                data.insert(0, date_text)
-                all_rows.append(data)
+        for a in page_anchors:
+            href = a.get("href", "")
+            if "page" in href or "seite" in href:
+                full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
+                if full_link not in pagination_links:
+                    pagination_links.append(full_link)
 
-        time.sleep(1)
+        def extract_page_num(url):
+            match = re.search(r"(page|seite)/(\d+)", url)
+            return int(match.group(2)) if match else 1
 
+        pagination_links = sorted(pagination_links, key=extract_page_num)
+        print(f"   🔎 Found {len(pagination_links)} pages for this date.", flush=True)
+
+        for page_num, page_url in enumerate(pagination_links, 1):
+            response = requests.get(page_url, headers=HEADERS)
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
+            print(f"      ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
+
+            for row in transfer_rows:
+                cols = row.find_all("td")
+                keep_indices = [0, 1, 5, 8, 12, 14]
+                data = []
+                for idx, col in enumerate(cols, start=1):
+                    if idx in keep_indices:
+                        text_value = col.get_text(strip=True)
+                        a_tag = col.select_one("a")
+                        if a_tag and a_tag.get("href"):
+                            full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                            text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                        data.append(text_value)
+                if data:
+                    data.insert(0, date_text)
+                    all_rows.append(data)
+
+            time.sleep(1)
 
     # -------------------- Step 3: Append to Master sheet --------------------
     if all_rows:
@@ -196,6 +196,7 @@ for date_text, date_url in dates_list:
         print("⚠️ No transfers to write in new tab.", flush=True)
 
     return "🎉 Scraping completed!", 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
