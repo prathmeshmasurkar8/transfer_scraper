@@ -8,61 +8,31 @@ from flask import Flask
 import gspread
 from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import requests
 
 app = Flask(__name__)
 
-# -------------------- Step 1: Fetch transfer dates using undetected-chromedriver --------------------
-def fetch_transfer_dates_selenium(start_date_obj, end_date_obj):
+# -------------------- Step 1: Fetch transfer dates using requests + BeautifulSoup --------------------
+def fetch_transfer_dates_requests(start_date_obj, end_date_obj):
     BASE_URL = f"https://www.transfermarkt.com/statistik/transfertage?land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+    }
 
-    options = uc.ChromeOptions()
-    options.headless = True
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
-    
-    # Explicitly set binary location for Railway / Docker
-    options.binary_location = "/usr/bin/chromium"
-
-    driver = uc.Chrome(options=options)
-    driver.get(BASE_URL)
-
-    # -------------------- Accept cookies if popup exists --------------------
-    try:
-        cookie_btn = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "button#onetrust-accept-btn-handler"))
-        )
-        cookie_btn.click()
-        time.sleep(1)
-    except:
-        pass  # ignore if cookie button not present
-
-    # -------------------- Wait for table to load --------------------
-    WebDriverWait(driver, 15).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "table.items tbody tr"))
-    )
-    time.sleep(2)  # extra wait for safety
-
+    response = requests.get(BASE_URL, headers=HEADERS)
+    soup = BeautifulSoup(response.text, 'html.parser')
     dates_list = []
 
-    # Find all <td class="links"> in the table
-    tds = driver.find_elements(By.CSS_SELECTOR, "table.items tbody tr td.links a")
+    tds = soup.select("table.items tbody tr td.links a")
     for td in tds:
         date_text = td.text.strip()
-        href = td.get_attribute("href")
+        href = td.get("href")
         if re.match(r'\d{1,2}\.\d{1,2}\.\d{4}$', date_text):
             day, month, year = [x.strip().zfill(2) for x in date_text.split(".")]
             date_obj = datetime.date(int(year), int(month), int(day))
             if start_date_obj.date() <= date_obj <= end_date_obj.date():
-                dates_list.append([date_text, href])
-
-    driver.quit()
+                full_url = urllib.parse.urljoin("https://www.transfermarkt.com", href)
+                dates_list.append([date_text, full_url])
 
     if not dates_list:
         raise ValueError("❌ No transfers available for the provided date range.")
@@ -103,9 +73,9 @@ def run_script():
     if start_date_obj > end_date_obj:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
 
-    # -------------------- Step 1: Fetch transfer dates with Selenium --------------------
-    print("Fetching transfer dates with Selenium...", flush=True)
-    dates_list = fetch_transfer_dates_selenium(start_date_obj, end_date_obj)
+    # -------------------- Step 1: Fetch transfer dates --------------------
+    print("Fetching transfer dates...", flush=True)
+    dates_list = fetch_transfer_dates_requests(start_date_obj, end_date_obj)
 
     # -------------------- Step 2: Scrape transfers with full pagination --------------------
     HEADERS = {
