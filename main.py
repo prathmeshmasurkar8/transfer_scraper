@@ -6,11 +6,8 @@ import urllib.parse
 from flask import Flask
 import gspread
 from google.oauth2.service_account import Credentials
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
+import requests
 
 app = Flask(__name__)
 
@@ -20,56 +17,72 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
     delta = (end_date_obj - start_date_obj).days
     for i in range(delta + 1):
         date = start_date_obj + datetime.timedelta(days=i)
-        # Correct URL without extra slash
         url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe/datum/{date.strftime('%Y-%m-%d')}"
         urls.append([date.strftime("%d.%m.%Y"), url])
     return urls
 
-# -------------------- Step 2: Scrape transfers using undetected-chromedriver --------------------
+# -------------------- Step 2: Scrape transfers using requests --------------------
 def scrape_transfers(dates_list):
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+    }
     all_rows = []
-
-    options = uc.ChromeOptions()
-    options.headless = True
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                         "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
-
-    driver = uc.Chrome(options=options)
 
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
+
+        # Retry mechanism
         success = False
         for attempt in range(3):
             try:
-                driver.get(date_url)
-                # Wait for table rows to be present
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "table.items tbody tr"))
-                )
-                page_html = driver.page_source
-                soup = BeautifulSoup(page_html, 'html.parser')
+                response = requests.get(date_url, headers=HEADERS, timeout=15)
+                if response.status_code != 200:
+                    raise Exception(f"HTTP {response.status_code}")
+                soup = BeautifulSoup(response.text, 'html.parser')
 
-                transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
-                print(f" ✅ Found {len(transfer_rows)} transfers", flush=True)
+                # Pagination handling
+                pagination_links = [date_url]
+                page_anchors = soup.select("ul.tm-pagination a[href]")
+                for a in page_anchors:
+                    href = a.get("href", "")
+                    if "page" in href or "seite" in href:
+                        full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
+                        if full_link not in pagination_links:
+                            pagination_links.append(full_link)
 
-                for row in transfer_rows:
-                    cols = row.find_all("td")
-                    keep_indices = [0, 1, 5, 8, 12, 14]  # Columns to keep
-                    data = []
-                    for idx, col in enumerate(cols, start=1):
-                        if idx in keep_indices:
-                            text_value = col.get_text(strip=True)
-                            a_tag = col.select_one("a")
-                            if a_tag and a_tag.get("href"):
-                                full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                                text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                            data.append(text_value)
-                    if data:
-                        data.insert(0, date_text)  # Add date at start
-                        all_rows.append(data)
+                # Sort pages
+                def extract_page_num(url):
+                    import re
+                    match = re.search(r"(page|seite)/(\d+)", url)
+                    return int(match.group(2)) if match else 1
+
+                pagination_links = sorted(pagination_links, key=extract_page_num)
+                print(f" 🔎 Found {len(pagination_links)} pages for this date", flush=True)
+
+                # Scrape each page
+                for page_num, page_url in enumerate(pagination_links, 1):
+                    r = requests.get(page_url, headers=HEADERS, timeout=15)
+                    soup_page = BeautifulSoup(r.text, 'html.parser')
+                    transfer_rows = soup_page.select("table.items tbody tr.odd, table.items tbody tr.even")
+                    print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
+
+                    for row in transfer_rows:
+                        cols = row.find_all("td")
+                        keep_indices = [0, 1, 5, 8, 12, 14]  # Date, Player, Age, From, To, Fee
+                        data = []
+                        for idx, col in enumerate(cols, start=1):
+                            if idx in keep_indices:
+                                text_value = col.get_text(strip=True)
+                                a_tag = col.select_one("a")
+                                if a_tag and a_tag.get("href"):
+                                    full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                                    text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                                data.append(text_value)
+                        if data:
+                            data.insert(0, date_text)
+                            all_rows.append(data)
+                    time.sleep(1)
                 success = True
                 break
             except Exception as e:
@@ -78,7 +91,6 @@ def scrape_transfers(dates_list):
         if not success:
             print(f"⚠️ Failed to fetch {date_url} after 3 attempts", flush=True)
 
-    driver.quit()
     return all_rows
 
 # -------------------- Flask Route --------------------
@@ -143,6 +155,5 @@ def run_script():
 
     return "Scraping completed!", 200
 
-# -------------------- Main --------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
