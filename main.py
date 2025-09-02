@@ -23,6 +23,10 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
 
 # -------------------- Step 2: Scrape transfers via ScraperAPI --------------------
 def scrape_transfers(dates_list):
+    import os, urllib.parse, time
+    import requests
+    from bs4 import BeautifulSoup
+
     all_rows = []
     SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
     if not SCRAPERAPI_KEY:
@@ -37,8 +41,6 @@ def scrape_transfers(dates_list):
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
 
         page_num = 1
-        previous_page_hash = None  # to detect repeated pages
-
         while True:
             current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
             success = False
@@ -48,15 +50,14 @@ def scrape_transfers(dates_list):
                     proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
                     response = requests.get(proxy_url, headers=HEADERS, timeout=20)
                     response.raise_for_status()
-
                     soup = BeautifulSoup(response.text, 'html.parser')
 
-                    # ---------------- Get all rows ----------------
+                    # ---------------- Get all <tr> rows ----------------
                     rows = soup.select("table.items tbody tr")
                     valid_rows = []
 
                     for row in rows:
-                        player_cell = row.select_one("td.hauptlink a")
+                        player_cell = row.select_one("td.hauptlink a")  # first main player link
                         if player_cell and player_cell.get_text(strip=True):
                             valid_rows.append(row)
 
@@ -65,14 +66,6 @@ def scrape_transfers(dates_list):
                         print(f" 🔹 Last page reached at page {page_num}. No more transfers.")
                         success = True
                         break
-
-                    # Stop if page repeats (same as previous)
-                    current_page_hash = hash(str([r.get_text() for r in valid_rows]))
-                    if current_page_hash == previous_page_hash:
-                        print(f" 🔹 Last page reached at page {page_num}. Duplicate page detected.")
-                        success = True
-                        break
-                    previous_page_hash = current_page_hash
 
                     print(f" ✅ Page {page_num} scraped ({len(valid_rows)} transfers)", flush=True)
 
@@ -84,7 +77,7 @@ def scrape_transfers(dates_list):
                         for idx, col in enumerate(cols, start=1):
                             if idx in keep_indices:
                                 text_value = col.get_text(strip=True)
-                                a_tag = col.select_one("td.hauptlink a")
+                                a_tag = col.select_one("td.hauptlink a")  # only main player link
                                 if a_tag and a_tag.get("href"):
                                     full_url = "https://www.transfermarkt.com" + a_tag["href"]
                                     text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
@@ -104,13 +97,13 @@ def scrape_transfers(dates_list):
                 print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
                 break
 
-            # Stop if fewer than 25 transfers found (last page)
+            # Stop if fewer than 25 transfers on page (last page)
             if len(valid_rows) < 25:
                 print(f" 🔹 Last page reached at page {page_num}.")
                 break
 
             page_num += 1
-            time.sleep(1)
+            time.sleep(1)  # polite scraping
 
     return all_rows
 
