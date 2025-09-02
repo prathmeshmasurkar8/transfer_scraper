@@ -10,6 +10,8 @@ from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import requests
 
 app = Flask(__name__)
@@ -24,19 +26,18 @@ def fetch_transfer_dates_selenium(start_date_obj, end_date_obj):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
+    options.binary_location = "/usr/bin/chromium"  # Necessary for Railway
 
-    # Explicitly tell UC where Chromium is in the Railway Docker container
-    options.binary_location = "/usr/bin/chromium"
-
-    # Initialize Chrome driver
     driver = uc.Chrome(options=options)
     driver.get(BASE_URL)
-    driver.implicitly_wait(5)
+
+    # Wait until the date links are loaded
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "td.links > a"))
+    )
 
     dates_list = []
-
-    # Find all <td class="links"> in the table
-    tds = driver.find_elements(By.CSS_SELECTOR, "table.items tbody tr td.links a")
+    tds = driver.find_elements(By.CSS_SELECTOR, "td.links > a")
     for td in tds:
         date_text = td.text.strip()
         href = td.get_attribute("href")
