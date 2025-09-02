@@ -22,11 +22,8 @@ def generate_transfer_urls(start_date_obj, end_date_obj):
     return urls
 
 # -------------------- Step 2: Scrape transfers via ScraperAPI --------------------
-def scrape_transfers_with_exact_pages(dates_list):
-    import os, urllib.parse, time
-    import requests
-    from bs4 import BeautifulSoup
-
+def scrape_transfers(dates_list):
+    all_rows = []
     SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
     if not SCRAPERAPI_KEY:
         raise ValueError("SCRAPERAPI_KEY environment variable not found!")
@@ -36,14 +33,27 @@ def scrape_transfers_with_exact_pages(dates_list):
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
 
-    all_rows = []
-
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
-        page_num = 1
-        exact_total_pages = 0
 
-        while True:
+        # ---------------- Detect total pages ----------------
+        try:
+            proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
+            response = requests.get(proxy_url, headers=HEADERS, timeout=20)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            pagination = soup.select("ul.tm-pagination li a")
+            page_numbers = [int(a.get_text()) for a in pagination if a.get_text().isdigit()]
+            total_pages = max(page_numbers) if page_numbers else 1
+            print(f" 🔹 Total pages detected: {total_pages}", flush=True)
+
+        except Exception as e:
+            print(f"⚠️ Could not detect total pages for {date_text}: {e}. Defaulting to 1 page.", flush=True)
+            total_pages = 1
+
+        # ---------------- Loop through pages ----------------
+        for page_num in range(1, total_pages + 1):
             current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
             success = False
             transfer_rows = []
@@ -53,23 +63,18 @@ def scrape_transfers_with_exact_pages(dates_list):
                     proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
                     response = requests.get(proxy_url, headers=HEADERS, timeout=20)
                     response.raise_for_status()
-                    soup = BeautifulSoup(response.text, 'html.parser')
 
-                    # ---------------- Only real transfer rows ----------------
-                    rows = soup.select("table.items tbody tr")
-                    for row in rows:
-                        player_cell = row.select_one("td.hauptlink a")
-                        if player_cell and player_cell.get_text(strip=True):
-                            transfer_rows.append(row)
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
                     if not transfer_rows:
-                        print(f" 🔹 Last page reached at page {page_num - 1}.")
+                        print(f" 🛑 No transfers found on page {page_num}.")
                         success = True
                         break
 
                     print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
-                    # ---------------- Collect data ----------------
+                    # Collect data
                     for row in transfer_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
@@ -77,7 +82,7 @@ def scrape_transfers_with_exact_pages(dates_list):
                         for idx, col in enumerate(cols, start=1):
                             if idx in keep_indices:
                                 text_value = col.get_text(strip=True)
-                                a_tag = col.select_one("td.hauptlink a")
+                                a_tag = col.select_one("a")
                                 if a_tag and a_tag.get("href"):
                                     full_url = "https://www.transfermarkt.com" + a_tag["href"]
                                     text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
@@ -88,20 +93,13 @@ def scrape_transfers_with_exact_pages(dates_list):
 
                     success = True
                     break
-
                 except Exception as e:
                     print(f"⚠️ Attempt {attempt + 1} failed for {current_url}: {e}", flush=True)
                     time.sleep(2)
 
             if not success:
                 print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
-                break
-
-            page_num += 1
-            exact_total_pages += 1
-            time.sleep(1)  # polite scraping
-
-        print(f" 🔹 Exact total pages for {date_text}: {exact_total_pages}", flush=True)
+            time.sleep(1)
 
     return all_rows
 
