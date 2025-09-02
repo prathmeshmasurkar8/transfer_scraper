@@ -36,7 +36,7 @@ def scrape_transfers(dates_list):
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
 
-        # ---------------- Detect total pages ----------------
+        # ---------------- Detect total pages robustly ----------------
         try:
             proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
             response = requests.get(proxy_url, headers=HEADERS, timeout=20)
@@ -44,8 +44,18 @@ def scrape_transfers(dates_list):
             soup = BeautifulSoup(response.text, 'html.parser')
 
             pagination = soup.select("ul.tm-pagination li a")
-            page_numbers = [int(a.get_text()) for a in pagination if a.get_text().isdigit()]
-            total_pages = max(page_numbers) if page_numbers else 1
+            last_page = 1
+
+            # Iterate over all pagination links and find the largest number
+            for a in pagination:
+                try:
+                    num = int(a.get_text(strip=True))
+                    if num > last_page:
+                        last_page = num
+                except:
+                    continue
+
+            total_pages = last_page
             print(f" 🔹 Total pages detected: {total_pages}", flush=True)
 
         except Exception as e:
