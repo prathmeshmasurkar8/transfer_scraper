@@ -39,8 +39,8 @@ def scrape_transfers(dates_list):
         page_num = 1
         while True:
             current_url = date_url if page_num == 1 else date_url.rstrip('/') + f"/page/{page_num}"
-            transfer_rows = []
             success = False
+            transfer_rows = []
 
             for attempt in range(3):
                 try:
@@ -51,14 +51,21 @@ def scrape_transfers(dates_list):
                     soup = BeautifulSoup(response.text, 'html.parser')
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
-                    if not transfer_rows:
-                        print(f" 🛑 No transfers found on page {page_num}. Stopping pagination for {date_text}.")
+                    # Filter valid rows (must have a player name)
+                    valid_rows = []
+                    for row in transfer_rows:
+                        cols = row.find_all("td")
+                        if len(cols) > 1 and cols[1].get_text(strip=True):
+                            valid_rows.append(row)
+
+                    if not valid_rows:
+                        print(f" 🛑 No valid transfers found on page {page_num}. Stopping pagination for {date_text}.")
                         success = True
                         break
 
-                    print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
+                    print(f" ✅ Page {page_num} scraped ({len(valid_rows)} transfers)", flush=True)
 
-                    for row in transfer_rows:
+                    for row in valid_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
                         data = []
@@ -85,8 +92,9 @@ def scrape_transfers(dates_list):
                 print(f" ⚠️ Failed to fetch page {page_num} after 3 attempts.", flush=True)
                 break
 
-            # Stop if no rows found (last page)
-            if not transfer_rows:
+            # Stop if the page had fewer than 25 valid transfers
+            if len(valid_rows) < 25:
+                print(f" 🔹 Last page reached at page {page_num}.")
                 break
 
             page_num += 1
