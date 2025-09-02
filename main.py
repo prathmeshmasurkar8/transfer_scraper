@@ -56,14 +56,8 @@ def scrape_transfers(dates_list):
                     soup = BeautifulSoup(response.text, 'html.parser')
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
 
-                    # STOP CONDITION: last page reached
-                    if not transfer_rows or soup.find("div", class_="no-records"):
-                        print(f" 🛑 Last page reached at page {page_num}")
-                        success = True
-                        break
-
-                    print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
-
+                    # Filter valid rows (skip placeholders)
+                    valid_rows = []
                     for row in transfer_rows:
                         cols = row.find_all("td")
                         keep_indices = [0, 1, 5, 8, 12, 14]
@@ -76,10 +70,19 @@ def scrape_transfers(dates_list):
                                     full_url = "https://www.transfermarkt.com" + a_tag["href"]
                                     text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
                                 data.append(text_value)
-                        if data:
+                        # Only keep row if it has actual data
+                        if any(cell.strip() != "" for cell in data):
                             data.insert(0, date_text)
-                            all_rows.append(data)
+                            valid_rows.append(data)
 
+                    if not valid_rows:
+                        # Last page reached
+                        print(f" 🛑 Last page reached at page {page_num}")
+                        success = True
+                        break
+
+                    print(f" ✅ Page {page_num} scraped ({len(valid_rows)} valid transfers)", flush=True)
+                    all_rows.extend(valid_rows)
                     success = True
                     break
                 except Exception as e:
@@ -90,8 +93,8 @@ def scrape_transfers(dates_list):
                 print(f"⚠️ Failed to fetch {page_url} after 3 attempts", flush=True)
                 break
 
-            # If last page reached, stop
-            if not transfer_rows or soup.find("div", class_="no-records"):
+            # Stop if last page reached
+            if not valid_rows:
                 break
 
             page_num += 1  # move to next page
