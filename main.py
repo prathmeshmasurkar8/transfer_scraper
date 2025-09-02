@@ -34,40 +34,16 @@ def scrape_transfers(dates_list):
                       "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
 
-    for date_text, date_url in dates_list:
+    for date_text, base_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
-        # Track all page URLs for this date
-        pagination_links = [date_url]
+        page_num = 1
+        while True:
+            # Construct page URL
+            if page_num == 1:
+                page_url = base_url
+            else:
+                page_url = base_url.replace("/datum/", f"/seite/{page_num}/datum/")
 
-        # First attempt to fetch the starting page to find pagination links
-        try:
-            proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
-            response = requests.get(proxy_url, headers=HEADERS, timeout=20)
-            soup = BeautifulSoup(response.text, 'html.parser')
-
-            # Find all pagination links (next pages)
-            page_anchors = soup.select("ul.tm-pagination a[href]")
-            for a in page_anchors:
-                href = a.get("href", "")
-                if "page" in href or "seite" in href:
-                    full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
-                    if full_link not in pagination_links:
-                        pagination_links.append(full_link)
-
-            # Sort pages by page number
-            import re
-            def extract_page_num(url):
-                match = re.search(r"(page|seite)/(\d+)", url)
-                return int(match.group(2)) if match else 1
-            pagination_links = sorted(pagination_links, key=extract_page_num)
-            print(f" 🔎 Found {len(pagination_links)} pages for this date", flush=True)
-
-        except Exception as e:
-            print(f"⚠️ Failed to fetch pagination for {date_url}: {e}", flush=True)
-            continue
-
-        # Loop through all pages
-        for page_num, page_url in enumerate(pagination_links, 1):
             success = False
             for attempt in range(3):
                 try:
@@ -78,6 +54,11 @@ def scrape_transfers(dates_list):
                     soup = BeautifulSoup(response.text, 'html.parser')
 
                     transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
+                    if not transfer_rows:
+                        # No more rows = last page reached
+                        success = True
+                        break
+
                     print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
                     for row in transfer_rows:
@@ -95,16 +76,24 @@ def scrape_transfers(dates_list):
                         if data:
                             data.insert(0, date_text)
                             all_rows.append(data)
+
                     success = True
                     break
                 except Exception as e:
                     print(f"⚠️ Attempt {attempt + 1} failed for {page_url}: {e}", flush=True)
                     time.sleep(2)
+
             if not success:
                 print(f"⚠️ Failed to fetch {page_url} after 3 attempts", flush=True)
+                break
+
+            if not transfer_rows:
+                # Reached last page
+                break
+
+            page_num += 1  # move to next page
 
     return all_rows
-
 
 # -------------------- Flask Route --------------------
 @app.route("/run-script")
