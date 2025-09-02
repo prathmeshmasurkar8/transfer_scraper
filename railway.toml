@@ -1,6 +1,0 @@
-[build]
-pythonVersion = "3.11"
-
-[env]
-GOOGLE_CREDS_JSON = "YOUR_GOOGLE_CREDS_JSON_HERE"
-UC_BINARY_CACHE = "true"
