@@ -1,16 +1,55 @@
-import requests
-from bs4 import BeautifulSoup
-import gspread
-from google.oauth2.service_account import Credentials
 import time
 import datetime
 import re
-import urllib.parse
 import os
 import json
+import urllib.parse
 from flask import Flask
+import gspread
+from google.oauth2.service_account import Credentials
+from bs4 import BeautifulSoup
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+import requests
 
 app = Flask(__name__)
+
+# -------------------- Step 1: Fetch transfer dates using undetected-chromedriver --------------------
+def fetch_transfer_dates_selenium(start_date_obj, end_date_obj):
+    BASE_URL = f"https://www.transfermarkt.com/statistik/transfertage?land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+
+    options = uc.ChromeOptions()
+    options.headless = True
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
+
+    driver = uc.Chrome(options=options)
+    driver.get(BASE_URL)
+    driver.implicitly_wait(5)
+
+    dates_list = []
+
+    # Find all <td class="links"> in the table
+    tds = driver.find_elements(By.CSS_SELECTOR, "table.items tbody tr td.links a")
+    for td in tds:
+        date_text = td.text.strip()
+        href = td.get_attribute("href")
+        if re.match(r'\d{1,2}\.\d{1,2}\.\d{4}$', date_text):
+            day, month, year = [x.strip().zfill(2) for x in date_text.split(".")]
+            date_obj = datetime.date(int(year), int(month), int(day))
+            if start_date_obj.date() <= date_obj <= end_date_obj.date():
+                dates_list.append([date_text, href])
+
+    driver.quit()
+
+    if not dates_list:
+        raise ValueError("❌ No transfers available for the provided date range.")
+
+    print(f"Found {len(dates_list)} valid transfer dates.")
+    return dates_list
+
 
 @app.route("/run-script")
 def run_script():
@@ -44,37 +83,15 @@ def run_script():
     if start_date_obj > end_date_obj:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
 
-    # -------------------- Transfermarkt Setup --------------------
-    BASE_URL = f"https://www.transfermarkt.com/statistik/transfertage?land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+    # -------------------- Step 1: Fetch transfer dates with Selenium --------------------
+    print("Fetching transfer dates with Selenium...", flush=True)
+    dates_list = fetch_transfer_dates_selenium(start_date_obj, end_date_obj)
+
+    # -------------------- Step 2: Scrape transfers with full pagination --------------------
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
 
-    # -------------------- Step 1: Fetch transfer dates --------------------
-    print("Fetching transfer dates...", flush=True)
-    response = requests.get(BASE_URL, headers=HEADERS)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    dates_list = []
-
-    rows = soup.select("table.items tbody tr")
-    for row in rows:
-        link_td = row.find("td", class_="links")  # select td by class
-        if link_td:
-            link = link_td.find("a")
-            if link:
-                date_text = link.text.strip()
-                if re.match(r'\d{1,2}\.\d{1,2}\.\d{4}$', date_text):  # relaxed regex
-                    day, month, year = [x.strip().zfill(2) for x in date_text.split(".")]
-                    date_obj = datetime.date(int(year), int(month), int(day))
-                    if start_date_obj.date() <= date_obj <= end_date_obj.date():
-                        date_url = "https://www.transfermarkt.com" + link['href']  # use href directly
-                        dates_list.append([date_text, date_url])
-
-    if not dates_list:
-        raise ValueError("❌ No transfers available for the provided date range.")
-    print(f"Found {len(dates_list)} valid transfer dates.", flush=True)
-
-    # -------------------- Step 2: Scrape transfers with full pagination --------------------
     all_rows = []
 
     for date_text, date_url in dates_list:
@@ -145,6 +162,7 @@ def run_script():
         print("⚠️ No transfers to write in new tab.", flush=True)
 
     return "Scraping completed!", 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
