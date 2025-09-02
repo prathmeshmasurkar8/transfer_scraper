@@ -12,17 +12,18 @@ import requests
 
 app = Flask(__name__)
 
-# -------------------- Step 1: Fetch transfer dates using requests + BeautifulSoup --------------------
+# -------------------- Step 1: Fetch transfer dates using requests --------------------
 def fetch_transfer_dates_requests(start_date_obj, end_date_obj):
     BASE_URL = f"https://www.transfermarkt.com/statistik/transfertage?land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+    
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
     }
 
     response = requests.get(BASE_URL, headers=HEADERS)
     soup = BeautifulSoup(response.text, 'html.parser')
-    dates_list = []
 
+    dates_list = []
     tds = soup.select("table.items tbody tr td.links a")
     for td in tds:
         date_text = td.text.strip()
@@ -35,7 +36,8 @@ def fetch_transfer_dates_requests(start_date_obj, end_date_obj):
                 dates_list.append([date_text, full_url])
 
     if not dates_list:
-        raise ValueError("❌ No transfers available for the provided date range.")
+        print("⚠️ No transfer dates found for this range.")
+        return []  # Instead of raising ValueError
 
     print(f"Found {len(dates_list)} valid transfer dates.")
     return dates_list
@@ -46,7 +48,8 @@ def run_script():
     # -------------------- Google Sheet Setup --------------------
     SERVICE_ACCOUNT_INFO = os.environ.get('GOOGLE_CREDS_JSON')
     if not SERVICE_ACCOUNT_INFO:
-        raise ValueError("GOOGLE_CREDS_JSON environment variable not found!")
+        return "❌ GOOGLE_CREDS_JSON environment variable not found!", 500
+
     service_account_info = json.loads(SERVICE_ACCOUNT_INFO)
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     credentials = Credentials.from_service_account_info(service_account_info, scopes=scopes)
@@ -68,7 +71,7 @@ def run_script():
         start_date_obj = datetime.datetime.strptime(start_date_raw, '%m/%d/%Y')
         end_date_obj = datetime.datetime.strptime(end_date_raw, '%m/%d/%Y')
     except ValueError:
-        raise ValueError("❌ Invalid date format in H1 or I1. Use MM/DD/YYYY.")
+        return "❌ Invalid date format in H1 or I1. Use MM/DD/YYYY.", 500
 
     if start_date_obj > end_date_obj:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
@@ -76,6 +79,9 @@ def run_script():
     # -------------------- Step 1: Fetch transfer dates --------------------
     print("Fetching transfer dates...", flush=True)
     dates_list = fetch_transfer_dates_requests(start_date_obj, end_date_obj)
+
+    if not dates_list:
+        return "⚠️ No transfer dates available for the selected range.", 200
 
     # -------------------- Step 2: Scrape transfers with full pagination --------------------
     HEADERS = {
@@ -88,6 +94,7 @@ def run_script():
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
         response = requests.get(date_url, headers=HEADERS)
         soup = BeautifulSoup(response.text, 'html.parser')
+
         pagination_links = [date_url]
         page_anchors = soup.select("ul.tm-pagination a[href]")
         for a in page_anchors:
@@ -142,7 +149,7 @@ def run_script():
     try:
         new_worksheet = sh.add_worksheet(title=new_tab_name, rows="2000", cols="10")
     except Exception as e:
-        raise Exception("Error creating new sheet/tab: " + str(e))
+        return f"❌ Error creating new sheet/tab: {str(e)}", 500
 
     new_worksheet.update(values=[['Date', 'Player', 'Age', 'From', 'To', 'Fee']], range_name='A1')
     if all_rows:
