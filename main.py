@@ -80,8 +80,8 @@ def run_script():
         raise ValueError("❌ No transfers available for the provided date range.")
     print(f"Found {len(dates_list)} valid transfer dates.", flush=True)
 
-    # -------------------- Step 2: Scrape transfers with retry loop --------------------
-    PAGE_SIZE_HINT = 25
+    # -------------------- Step 2: Scrape transfers with full pagination (robust) --------------------
+    PAGE_SIZE_HINT = 25  # used only as a last-resort hint
     all_rows = []
 
     def extract_page_num(url: str) -> int:
@@ -89,6 +89,7 @@ def run_script():
         return int(m.group(1)) if m else 1
 
     def build_next_from_current(url: str, next_num: int) -> str:
+        # Replace existing /page|seite/N or append /page/N just before query/fragment
         if re.search(r'/(?:page|seite)/\d+', url):
             return re.sub(r'/(?:page|seite)/\d+', f'/page/{next_num}', url)
         parts = urllib.parse.urlsplit(url)
@@ -106,31 +107,16 @@ def run_script():
             visited.add(current_url)
             page_num += 1
 
-            # ---- Retry wrapper for request ----
-            retries = 3
-            for attempt in range(retries):
-                try:
-                    proxy_page_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
-                    response = requests.get(proxy_page_url, headers=HEADERS, timeout=30)
-                    response.raise_for_status()
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    break
-                except Exception as e:
-                    print(f"⚠️ Error fetching {current_url} (attempt {attempt+1}/{retries}): {e}", flush=True)
-                    if attempt < retries - 1:
-                        time.sleep(2 ** attempt)
-                    else:
-                        print(f"❌ Skipping {current_url} after {retries} attempts.", flush=True)
-                        soup = None
-            if not soup:
-                break
+            proxy_page_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
+            response = requests.get(proxy_page_url, headers=HEADERS)
+            soup = BeautifulSoup(response.text, 'html.parser')
 
             transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
             print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
             for row in transfer_rows:
                 cols = row.find_all("td")
-                keep_indices = [0, 1, 5, 8, 12, 14]
+                keep_indices = [0, 1, 5, 8, 12, 14]  # keep your existing mapping
                 data = []
                 for idx, col in enumerate(cols, start=1):
                     if idx in keep_indices:
@@ -144,15 +130,21 @@ def run_script():
                     data.insert(0, date_text)
                     all_rows.append(data)
 
-            # ---- Find next page (unchanged) ----
+            # ---- Determine the next page URL (several strategies) ----
             next_url = None
+
+            # 1) rel="next" (anchor or <link>)
             rel_next = soup.select_one('a[rel="next"], link[rel="next"]')
             if rel_next and rel_next.get('href'):
                 next_url = urllib.parse.urljoin('https://www.transfermarkt.com', rel_next['href'])
+
+            # 2) right-arrow/icon classes
             if not next_url:
                 right = soup.select_one('ul.tm-pagination a[class*="icon-right"], ul.tm-pagination a[class*="right"]')
                 if right and right.get('href'):
                     next_url = urllib.parse.urljoin('https://www.transfermarkt.com', right['href'])
+
+            # 3) numeric links: pick the (current + 1)
             if not next_url:
                 current_n = extract_page_num(current_url)
                 nums = []
@@ -162,18 +154,23 @@ def run_script():
                     if m:
                         nums.append((int(m.group(1)), href))
                 if nums:
+                    # exact next candidate
                     for n, href in nums:
                         if n == current_n + 1:
                             next_url = urllib.parse.urljoin('https://www.transfermarkt.com', href)
                             break
+                    # if we saw a higher page exists but not the exact next link, synthesize it
                     if not next_url:
                         max_n = max(n for n, _ in nums)
                         if max_n > current_n:
                             next_url = build_next_from_current(current_url, current_n + 1)
+
+            # 4) last resort: if page looks "full", assume there's a next page and synthesize it
             if not next_url and len(transfer_rows) >= PAGE_SIZE_HINT:
                 current_n = extract_page_num(current_url)
                 next_url = build_next_from_current(current_url, current_n + 1)
 
+            # Stop if no next or loop detected
             if next_url and next_url not in visited:
                 print(f"   → Next page: {next_url}", flush=True)
                 current_url = next_url
@@ -182,7 +179,7 @@ def run_script():
 
             time.sleep(1)
 
-    # -------------------- Step 3: Append to Master --------------------
+    # -------------------- Step 3: Append to Master sheet --------------------
     if all_rows:
         master_existing = master_sheet.get_all_values()
         start_row = len(master_existing) + 1
@@ -198,10 +195,10 @@ def run_script():
     new_worksheet.update(values=[['Date', 'Player', 'Age', 'From', 'To', 'Fee']], range_name='A1')
     if all_rows:
         new_worksheet.update(values=all_rows, range_name='A2', raw=False)
-        print(f"✅ Data written to new tab: {new_tab_name}", flush=True)
+        print(f"✅ Data successfully written to new tab: {new_tab_name}", flush=True)
     else:
         new_worksheet.update(values=[['No transfers found in this range']], range_name='A2', raw=False)
-        print(f"⚠️ No transfers found. Created tab: {new_tab_name}", flush=True)
+        print(f"⚠️ No transfers found for the selected range. Created tab: {new_tab_name}", flush=True)
 
     return "Scraping completed!", 200
 
