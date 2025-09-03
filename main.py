@@ -166,6 +166,10 @@ def run_script():
 
             print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
+            if len(transfer_rows) < PAGE_SIZE_HINT:
+               print(f"⚠️ Last page detected due to fewer rows ({len(transfer_rows)}), stopping pagination.", flush=True)
+               break
+
             for row in transfer_rows:
                 cols = row.find_all("td")
                 keep_indices = [0, 1, 5, 8, 12, 14]  # keep your existing mapping
