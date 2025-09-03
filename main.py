@@ -159,7 +159,7 @@ def run_script():
             soup = BeautifulSoup(response.text, 'html.parser')
 
             # safer selector (ignore odd/even class dependency)
-            transfer_rows = soup.select("table.items tbody tr")
+            transfer_rows = soup.select("table.items tbody tr.odd, table.items tbody tr.even")
             if not transfer_rows:
                 print(f"⚠️ No transfers found on page {page_num}, stopping pagination for this date.", flush=True)
                 break
