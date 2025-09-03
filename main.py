@@ -97,7 +97,9 @@ def run_script():
 
     print(f"Found {len(dates_list)} valid transfer dates.", flush=True)
 
-    # -------------------- Step 2: Scrape transfers with full pagination --------------------
+       # -------------------- Step 2: Scrape transfers with full pagination --------------------
+    import random
+
     all_rows = []
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
@@ -187,7 +189,3 @@ def run_script():
         print(f"⚠️ No transfers found for the selected range. Created tab: {new_tab_name}", flush=True)
 
     return "Scraping completed!", 200
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
