@@ -84,13 +84,28 @@ def run_script():
     all_rows = []
     for date_text, date_url in dates_list:
         print(f"\n📅 Scraping transfers for {date_text}...", flush=True)
+        proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(date_url)}"
+        response = requests.get(proxy_url, headers=HEADERS)
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-        current_url = date_url
-        page_num = 0
+        pagination_links = [date_url]
+        page_anchors = soup.select("ul.tm-pagination a[href]")
+        for a in page_anchors:
+            href = a.get("href", "")
+            if "page" in href or "seite" in href:
+                full_link = urllib.parse.urljoin("https://www.transfermarkt.com", href)
+                if full_link not in pagination_links:
+                    pagination_links.append(full_link)
 
-        while current_url:
-            page_num += 1
-            proxy_page_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
+        def extract_page_num(url):
+            match = re.search(r"(page|seite)/(\d+)", url)
+            return int(match.group(2)) if match else 1
+
+        pagination_links = sorted(pagination_links, key=extract_page_num)
+        print(f" 🔎 Found {len(pagination_links)} pages for this date", flush=True)
+
+        for page_num, page_url in enumerate(pagination_links, 1):
+            proxy_page_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(page_url)}"
             response = requests.get(proxy_page_url, headers=HEADERS)
             soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -112,18 +127,6 @@ def run_script():
                 if data:
                     data.insert(0, date_text)
                     all_rows.append(data)
-
-            # find next page (right arrow link)
-            next_anchor = soup.select_one("ul.tm-pagination a.tm-pagination__link--icon-right")
-            if next_anchor and next_anchor.get("href"):
-                next_url = urllib.parse.urljoin("https://www.transfermarkt.com", next_anchor["href"])
-                if next_url != current_url:
-                    current_url = next_url
-                else:
-                    current_url = None
-            else:
-                current_url = None
-
             time.sleep(1)
 
     # -------------------- Step 3: Append to Master sheet --------------------
@@ -148,7 +151,6 @@ def run_script():
         print(f"⚠️ No transfers found for the selected range. Created tab: {new_tab_name}", flush=True)
 
     return "Scraping completed!", 200
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
