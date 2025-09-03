@@ -8,29 +8,31 @@ import re
 import urllib.parse
 import os
 import json
+import random
 from flask import Flask
 
 app = Flask(__name__)
 
 # -------------------- Safe Helpers --------------------
 def fetch_url(url, headers, retries=3, timeout=10):
-    """Robust fetch with retries + backoff."""
+    """Robust fetch with retries + backoff and immediate logs."""
     for attempt in range(retries):
         try:
             print(f"🌐 Fetching: {url} (attempt {attempt+1})", flush=True)
             response = requests.get(url, headers=headers, timeout=timeout)
             response.raise_for_status()
+            print(f"   ✅ Success on attempt {attempt+1}", flush=True)
             return response
         except Exception as e:
-            print(f"⚠️ Error fetching {url}: {e}", flush=True)
+            print(f"   ⚠️ Error fetching {url}: {e} (attempt {attempt+1}/{retries})", flush=True)
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # exponential backoff
+                time.sleep(2 ** attempt)  # backoff: 1s, 2s, ...
             else:
-                print(f"❌ Giving up on {url}", flush=True)
+                print(f"   ❌ Giving up on {url}", flush=True)
                 return None
 
 def safe_update(ws, values, rng):
-    """Retry wrapper for Google Sheet update."""
+    """Retry wrapper for Google Sheet update with logs."""
     for attempt in range(3):
         try:
             ws.update(values=values, range_name=rng, raw=False)
@@ -38,7 +40,7 @@ def safe_update(ws, values, rng):
         except Exception as e:
             print(f"⚠️ Sheet update failed (attempt {attempt+1}): {e}", flush=True)
             time.sleep(2)
-    print(f"❌ Failed to update range {rng}", flush=True)
+    print(f"❌ Failed to update range {rng} after retries", flush=True)
     return False
 
 
@@ -80,17 +82,23 @@ def run_script():
         raise ValueError("SCRAPERAPI_KEY environment variable not found!")
 
     HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/139.0.0.0 Safari/537.36"
     }
 
     # -------------------- Step 1: Fetch transfer dates --------------------
     print("Fetching transfer dates...", flush=True)
-    base_url = f"https://www.transfermarkt.com/statistik/transfertage?land_id_zu=0&land_id_ab=0&datum_von={start_date_obj.strftime('%Y-%m-%d')}&datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+    base_url = (
+        f"https://www.transfermarkt.com/statistik/transfertage?"
+        f"land_id_zu=0&land_id_ab=0&"
+        f"datum_von={start_date_obj.strftime('%Y-%m-%d')}&"
+        f"datum_bis={end_date_obj.strftime('%Y-%m-%d')}&leihe="
+    )
     proxy_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(base_url)}"
     response = fetch_url(proxy_url, HEADERS)
     if not response:
-        return "Failed to fetch transfer dates", 500
+        return "❌ Failed to fetch transfer dates", 500
     soup = BeautifulSoup(response.text, 'html.parser')
 
     dates_list = []
@@ -105,7 +113,11 @@ def run_script():
                     day, month, year = [x.strip() for x in date_text.split(".")]
                     date_obj = datetime.date(int(year), int(month), int(day))
                     if start_date_obj.date() <= date_obj <= end_date_obj.date():
-                        date_url = f"https://www.transfermarkt.com/transfers/transfertagedetail/statistik/top/land_id_zu/0/land_id_ab/0/leihe//datum/{year}-{month}-{day}"
+                        date_url = (
+                            "https://www.transfermarkt.com/transfers/"
+                            f"transfertagedetail/statistik/top/land_id_zu/0/"
+                            f"land_id_ab/0/leihe//datum/{year}-{month}-{day}"
+                        )
                         dates_list.append([date_text, date_url])
 
     if not dates_list:
@@ -113,7 +125,7 @@ def run_script():
     print(f"Found {len(dates_list)} valid transfer dates.", flush=True)
 
     # -------------------- Step 2: Scrape transfers with full pagination --------------------
-    PAGE_SIZE_HINT = 25
+    PAGE_SIZE_HINT = 25  # used only as a last-resort hint
     all_rows = []
 
     def extract_page_num(url: str) -> int:
@@ -121,6 +133,7 @@ def run_script():
         return int(m.group(1)) if m else 1
 
     def build_next_from_current(url: str, next_num: int) -> str:
+        # Replace existing /page|seite/N or append /page/N just before query/fragment
         if re.search(r'/(?:page|seite)/\d+', url):
             return re.sub(r'/(?:page|seite)/\d+', f'/page/{next_num}', url)
         parts = urllib.parse.urlsplit(url)
@@ -141,44 +154,52 @@ def run_script():
             proxy_page_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(current_url)}"
             response = fetch_url(proxy_page_url, HEADERS)
             if not response:
+                print(f"❌ Skipping page due to fetch failure: {current_url}", flush=True)
                 break
             soup = BeautifulSoup(response.text, 'html.parser')
 
             # safer selector (ignore odd/even class dependency)
             transfer_rows = soup.select("table.items tbody tr")
             if not transfer_rows:
-                print(f"⚠️ No transfers found on page {page_num}, stopping pagination.", flush=True)
+                print(f"⚠️ No transfers found on page {page_num}, stopping pagination for this date.", flush=True)
                 break
 
             print(f" ✅ Page {page_num} scraped ({len(transfer_rows)} transfers)", flush=True)
 
             for row in transfer_rows:
                 cols = row.find_all("td")
-                keep_indices = [0, 1, 5, 8, 12, 14]
+                keep_indices = [0, 1, 5, 8, 12, 14]  # keep your existing mapping
                 data = []
                 for idx, col in enumerate(cols, start=1):
-                    if idx in keep_indices:
-                        text_value = col.get_text(strip=True)
-                        a_tag = col.select_one("a")
-                        if a_tag and a_tag.get("href"):
-                            full_url = "https://www.transfermarkt.com" + a_tag["href"]
-                            text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
-                        data.append(text_value)
+                    try:
+                        if idx in keep_indices:
+                            text_value = col.get_text(strip=True)
+                            a_tag = col.select_one("a")
+                            if a_tag and a_tag.get("href"):
+                                full_url = "https://www.transfermarkt.com" + a_tag["href"]
+                                text_value = f'=HYPERLINK("{full_url}", "{a_tag.text.strip()}")'
+                            data.append(text_value)
+                    except Exception as e:
+                        print(f"⚠️ Error parsing cell idx {idx} on page {page_num}: {e}", flush=True)
                 if data:
                     data.insert(0, date_text)
                     all_rows.append(data)
 
-            # ---- Pagination logic (same as before) ----
+            # ---- Determine the next page URL (several strategies) ----
             next_url = None
+
+            # 1) rel="next" (anchor or <link>)
             rel_next = soup.select_one('a[rel="next"], link[rel="next"]')
             if rel_next and rel_next.get('href'):
                 next_url = urllib.parse.urljoin('https://www.transfermarkt.com', rel_next['href'])
 
+            # 2) right-arrow/icon classes
             if not next_url:
-                right = soup.select_one('ul.tm-pagination a[class*="icon-right"], ul.tm-pagination a[class*="right"]')
+                right = soup.select_one('ul.tm-pagination a[class*="icon-right"], ul.tm-pagination a[class*="right"], ul.tm-pagination a.tm-pagination__link--icon-right')
                 if right and right.get('href'):
                     next_url = urllib.parse.urljoin('https://www.transfermarkt.com', right['href'])
 
+            # 3) numeric links: pick the (current + 1)
             if not next_url:
                 current_n = extract_page_num(current_url)
                 nums = []
@@ -188,26 +209,32 @@ def run_script():
                     if m:
                         nums.append((int(m.group(1)), href))
                 if nums:
+                    # exact next candidate
                     for n, href in nums:
                         if n == current_n + 1:
                             next_url = urllib.parse.urljoin('https://www.transfermarkt.com', href)
                             break
+                    # if we saw a higher page exists but not the exact next link, synthesize it
                     if not next_url:
                         max_n = max(n for n, _ in nums)
                         if max_n > current_n:
                             next_url = build_next_from_current(current_url, current_n + 1)
 
+            # 4) last resort: if page looks "full", assume there's a next page and synthesize it
             if not next_url and len(transfer_rows) >= PAGE_SIZE_HINT:
                 current_n = extract_page_num(current_url)
                 next_url = build_next_from_current(current_url, current_n + 1)
 
+            # Stop if no next or loop detected
             if next_url and next_url not in visited:
                 print(f"   → Next page: {next_url}", flush=True)
                 current_url = next_url
             else:
                 current_url = None
 
+            # polite randomized delay
             time.sleep(random.uniform(1, 3))
+
     # -------------------- Step 3: Append to Master sheet --------------------
     if all_rows:
         master_existing = master_sheet.get_all_values()
@@ -233,4 +260,5 @@ def run_script():
 
 
 if __name__ == "__main__":
+    # default port (Railway/Heroku supply PORT env var)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
